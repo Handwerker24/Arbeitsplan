@@ -1,0 +1,20 @@
+# Build/Distribution
+dist/
+out/
+build/
+release/
+*.asar
+*.exe
+*.msi
+*.zip
+*.7z
+
+# Node
+node_modules/
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
