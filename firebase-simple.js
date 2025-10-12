@@ -44,6 +44,12 @@ class FirebaseDB {
             return true;
         } catch (error) {
             console.error('Fehler beim Speichern:', error);
+            // Temporärer Fallback zu localStorage bei Berechtigungsfehlern
+            if (error.code === 'PERMISSION_DENIED') {
+                console.log('Firebase-Berechtigung verweigert, verwende localStorage als Fallback');
+                localStorage.setItem(path, JSON.stringify(data));
+                return true;
+            }
             throw error;
         }
     }
@@ -64,6 +70,12 @@ class FirebaseDB {
             }
         } catch (error) {
             console.error('Fehler beim Laden:', error);
+            // Temporärer Fallback zu localStorage bei Berechtigungsfehlern
+            if (error.code === 'PERMISSION_DENIED') {
+                console.log('Firebase-Berechtigung verweigert, verwende localStorage als Fallback');
+                const data = localStorage.getItem(path);
+                return data ? JSON.parse(data) : null;
+            }
             throw error;
         }
     }
@@ -80,6 +92,12 @@ class FirebaseDB {
             return true;
         } catch (error) {
             console.error('Fehler beim Löschen:', error);
+            // Temporärer Fallback zu localStorage bei Berechtigungsfehlern
+            if (error.code === 'PERMISSION_DENIED') {
+                console.log('Firebase-Berechtigung verweigert, verwende localStorage als Fallback');
+                localStorage.removeItem(path);
+                return true;
+            }
             throw error;
         }
     }

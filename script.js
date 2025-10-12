@@ -276,8 +276,8 @@ document.addEventListener('keydown', (e) => {
             }
         });
         
-        localStorage.setItem('cellNotes', JSON.stringify(cellNotes));
-        localStorage.setItem('cellLinks', JSON.stringify(cellLinks));
+        saveData('cellNotes', cellNotes);
+        saveData('cellLinks', cellLinks);
         saveData('assignments', assignments);
     }
     
@@ -1137,9 +1137,9 @@ function saveCellNote() {
         }
     }
     
-    localStorage.setItem('cellNotes', JSON.stringify(cellNotes));
-    localStorage.setItem('cellLinks', JSON.stringify(cellLinks));
-    localStorage.setItem('cellAddresses', JSON.stringify(cellAddresses));
+    saveData('cellNotes', cellNotes);
+    saveData('cellLinks', cellLinks);
+    saveData('cellAddresses', cellAddresses);
 }
 
 function showDeleteEmployeeModal(employee) {
@@ -1156,7 +1156,7 @@ function confirmDeleteEmployee() {
     const employee = deleteEmployeeModal.dataset.employee;
     const endDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
     employeeEndDates[employee] = endDate.toISOString().split('T')[0];
-    localStorage.setItem('employeeEndDates', JSON.stringify(employeeEndDates));
+    saveData('employeeEndDates', employeeEndDates);
     hideDeleteEmployeeModal();
     updateCalendar();
 }
