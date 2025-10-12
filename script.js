@@ -43,41 +43,33 @@ async function initializeFirebase() {
         return true;
     } catch (error) {
         console.error('Fehler bei Firebase-Initialisierung:', error);
-        // Fallback zu localStorage wenn Firebase nicht verfügbar
-        employees = JSON.parse(localStorage.getItem('employees')) || [];
-        assignments = JSON.parse(localStorage.getItem('assignments')) || {};
-        employeeStartDates = JSON.parse(localStorage.getItem('employeeStartDates')) || {};
-        employeeEndDates = JSON.parse(localStorage.getItem('employeeEndDates')) || {};
-        cellNotes = JSON.parse(localStorage.getItem('cellNotes')) || {};
-        cellLinks = JSON.parse(localStorage.getItem('cellLinks')) || {};
-        cellAddresses = JSON.parse(localStorage.getItem('cellAddresses')) || {};
-        return false;
+        throw error;
     }
 }
 
-// Speichere Daten in Firebase oder localStorage (Fallback)
+// Speichere Daten in Firebase
 async function saveData(key, data) {
-    if (firebaseDB) {
-        switch(key) {
-            case 'employees':
-                return await firebaseDB.saveEmployees(data);
-            case 'assignments':
-                return await firebaseDB.saveAssignments(data);
-            case 'employeeStartDates':
-                return await firebaseDB.saveEmployeeStartDates(data);
-            case 'employeeEndDates':
-                return await firebaseDB.saveEmployeeEndDates(data);
-            case 'cellNotes':
-                return await firebaseDB.saveCellNotes(data);
-            case 'cellLinks':
-                return await firebaseDB.saveCellLinks(data);
-            case 'cellAddresses':
-                return await firebaseDB.saveCellAddresses(data);
-        }
-    } else {
-        // Fallback zu localStorage
-        localStorage.setItem(key, JSON.stringify(data));
-        return true;
+    if (!firebaseDB) {
+        throw new Error('Firebase nicht verfügbar');
+    }
+    
+    switch(key) {
+        case 'employees':
+            return await firebaseDB.saveEmployees(data);
+        case 'assignments':
+            return await firebaseDB.saveAssignments(data);
+        case 'employeeStartDates':
+            return await firebaseDB.saveEmployeeStartDates(data);
+        case 'employeeEndDates':
+            return await firebaseDB.saveEmployeeEndDates(data);
+        case 'cellNotes':
+            return await firebaseDB.saveCellNotes(data);
+        case 'cellLinks':
+            return await firebaseDB.saveCellLinks(data);
+        case 'cellAddresses':
+            return await firebaseDB.saveCellAddresses(data);
+        default:
+            throw new Error('Unbekannter Datentyp: ' + key);
     }
 }
 
@@ -401,10 +393,15 @@ document.addEventListener('keydown', (e) => {
 
 // Initialisierung
 async function initializeApp() {
-    await initializeFirebase();
-    initializeYearGrid();
-    initializeMonthGrid();
-    updateCalendar();
+    try {
+        await initializeFirebase();
+        initializeYearGrid();
+        initializeMonthGrid();
+        updateCalendar();
+    } catch (error) {
+        console.error('App konnte nicht initialisiert werden:', error);
+        alert('Fehler beim Laden der App. Bitte überprüfen Sie Ihre Internetverbindung und laden Sie die Seite neu.');
+    }
 }
 
 // Starte die App
