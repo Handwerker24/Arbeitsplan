@@ -22,9 +22,12 @@ const MAX_UNDO_STEPS = 10;
 // Firebase Initialisierung
 async function initializeFirebase() {
     try {
-        // Lade Firebase-Konfiguration
-        const { FirebaseDB } = await import('./firebase-config.js');
-        firebaseDB = new FirebaseDB();
+        // Verwende die globale Firebase-Instanz
+        firebaseDB = window.firebaseDB;
+        
+        if (!firebaseDB) {
+            throw new Error('Firebase nicht verfügbar');
+        }
         
         // Lade alle Daten aus Firebase
         const data = await firebaseDB.loadAllData();
