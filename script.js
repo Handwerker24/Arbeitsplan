@@ -1,22 +1,82 @@
 // Globale Variablen
 let currentDate = new Date();
-let employees = JSON.parse(localStorage.getItem('employees')) || [];
-let assignments = JSON.parse(localStorage.getItem('assignments')) || {};
-let employeeStartDates = JSON.parse(localStorage.getItem('employeeStartDates')) || {};
-let employeeEndDates = JSON.parse(localStorage.getItem('employeeEndDates')) || {};
+let employees = [];
+let assignments = {};
+let employeeStartDates = {};
+let employeeEndDates = {};
 let selectedCells = new Set();
 let isSelecting = false;
 let lastSelectedCell = null;
-let cellNotes = JSON.parse(localStorage.getItem('cellNotes')) || {};
-let cellLinks = JSON.parse(localStorage.getItem('cellLinks')) || {};
+let cellNotes = {};
+let cellLinks = {};
 let copiedContent = null; // Speichert den kopierten Inhalt
 let isZoomedOut = false;
-let cellAddresses = JSON.parse(localStorage.getItem('cellAddresses')) || {};
+let cellAddresses = {};
 let isWeekView = false; // Neue Variable für den Ansichtsmodus
+let firebaseDB = null; // Firebase Database Instanz
 
 // Undo-Funktionalität
 let undoStack = [];
 const MAX_UNDO_STEPS = 10;
+
+// Firebase Initialisierung
+async function initializeFirebase() {
+    try {
+        // Lade Firebase-Konfiguration
+        const { FirebaseDB } = await import('./firebase-config.js');
+        firebaseDB = new FirebaseDB();
+        
+        // Lade alle Daten aus Firebase
+        const data = await firebaseDB.loadAllData();
+        employees = data.employees;
+        assignments = data.assignments;
+        employeeStartDates = data.employeeStartDates;
+        employeeEndDates = data.employeeEndDates;
+        cellNotes = data.cellNotes;
+        cellLinks = data.cellLinks;
+        cellAddresses = data.cellAddresses;
+        
+        console.log('Firebase erfolgreich initialisiert');
+        return true;
+    } catch (error) {
+        console.error('Fehler bei Firebase-Initialisierung:', error);
+        // Fallback zu localStorage wenn Firebase nicht verfügbar
+        employees = JSON.parse(localStorage.getItem('employees')) || [];
+        assignments = JSON.parse(localStorage.getItem('assignments')) || {};
+        employeeStartDates = JSON.parse(localStorage.getItem('employeeStartDates')) || {};
+        employeeEndDates = JSON.parse(localStorage.getItem('employeeEndDates')) || {};
+        cellNotes = JSON.parse(localStorage.getItem('cellNotes')) || {};
+        cellLinks = JSON.parse(localStorage.getItem('cellLinks')) || {};
+        cellAddresses = JSON.parse(localStorage.getItem('cellAddresses')) || {};
+        return false;
+    }
+}
+
+// Speichere Daten in Firebase oder localStorage (Fallback)
+async function saveData(key, data) {
+    if (firebaseDB) {
+        switch(key) {
+            case 'employees':
+                return await firebaseDB.saveEmployees(data);
+            case 'assignments':
+                return await firebaseDB.saveAssignments(data);
+            case 'employeeStartDates':
+                return await firebaseDB.saveEmployeeStartDates(data);
+            case 'employeeEndDates':
+                return await firebaseDB.saveEmployeeEndDates(data);
+            case 'cellNotes':
+                return await firebaseDB.saveCellNotes(data);
+            case 'cellLinks':
+                return await firebaseDB.saveCellLinks(data);
+            case 'cellAddresses':
+                return await firebaseDB.saveCellAddresses(data);
+        }
+    } else {
+        // Fallback zu localStorage
+        localStorage.setItem(key, JSON.stringify(data));
+        return true;
+    }
+}
 
 function saveState() {
     const state = {
@@ -40,10 +100,10 @@ function undo() {
         cellLinks = previousState.cellLinks;
         cellAddresses = previousState.cellAddresses;
         
-        localStorage.setItem('assignments', JSON.stringify(assignments));
-        localStorage.setItem('cellNotes', JSON.stringify(cellNotes));
-        localStorage.setItem('cellLinks', JSON.stringify(cellLinks));
-        localStorage.setItem('cellAddresses', JSON.stringify(cellAddresses));
+        saveData('assignments', assignments);
+        saveData('cellNotes', cellNotes);
+        saveData('cellLinks', cellLinks);
+        saveData('cellAddresses', cellAddresses);
         
         updateCalendar();
     }
@@ -114,9 +174,9 @@ document.getElementById('saveEmployee').addEventListener('click', () => {
         const endDate = new Date('2100-12-31');
         employeeEndDates[name] = endDate.toISOString().split('T')[0];
         
-        localStorage.setItem('employees', JSON.stringify(employees));
-        localStorage.setItem('employeeStartDates', JSON.stringify(employeeStartDates));
-        localStorage.setItem('employeeEndDates', JSON.stringify(employeeEndDates));
+        saveData('employees', employees);
+        saveData('employeeStartDates', employeeStartDates);
+        saveData('employeeEndDates', employeeEndDates);
         
         updateCalendar();
         employeeModal.style.display = 'none';
@@ -223,7 +283,7 @@ document.addEventListener('keydown', (e) => {
         
         localStorage.setItem('cellNotes', JSON.stringify(cellNotes));
         localStorage.setItem('cellLinks', JSON.stringify(cellLinks));
-        localStorage.setItem('assignments', JSON.stringify(assignments));
+        saveData('assignments', assignments);
     }
     
     // Strg+C
@@ -329,17 +389,23 @@ document.addEventListener('keydown', (e) => {
             }
         });
         
-        localStorage.setItem('cellNotes', JSON.stringify(cellNotes));
-        localStorage.setItem('cellLinks', JSON.stringify(cellLinks));
-        localStorage.setItem('cellAddresses', JSON.stringify(cellAddresses));
-        localStorage.setItem('assignments', JSON.stringify(assignments));
+        saveData('cellNotes', cellNotes);
+        saveData('cellLinks', cellLinks);
+        saveData('cellAddresses', cellAddresses);
+        saveData('assignments', assignments);
     }
 });
 
 // Initialisierung
-initializeYearGrid();
-initializeMonthGrid();
-updateCalendar();
+async function initializeApp() {
+    await initializeFirebase();
+    initializeYearGrid();
+    initializeMonthGrid();
+    updateCalendar();
+}
+
+// Starte die App
+initializeApp();
 
 function initializeYearGrid() {
     const currentYear = currentDate.getFullYear();
@@ -936,7 +1002,7 @@ function applyStatusToSelectedCells(status) {
         }
     });
     
-    localStorage.setItem('assignments', JSON.stringify(assignments));
+    saveData('assignments', assignments);
     clearSelection();
 }
 
@@ -1224,13 +1290,13 @@ document.getElementById('confirmExport').addEventListener('click', () => {
 
 function exportJSON(range) {
     const data = {
-        employees: JSON.parse(localStorage.getItem('employees')) || [],
-        assignments: JSON.parse(localStorage.getItem('assignments')) || {},
-        employeeStartDates: JSON.parse(localStorage.getItem('employeeStartDates')) || {},
-        employeeEndDates: JSON.parse(localStorage.getItem('employeeEndDates')) || {},
-        cellNotes: JSON.parse(localStorage.getItem('cellNotes')) || {},
-        cellLinks: JSON.parse(localStorage.getItem('cellLinks')) || {},
-        cellAddresses: JSON.parse(localStorage.getItem('cellAddresses')) || {}
+        employees: employees,
+        assignments: assignments,
+        employeeStartDates: employeeStartDates,
+        employeeEndDates: employeeEndDates,
+        cellNotes: cellNotes,
+        cellLinks: cellLinks,
+        cellAddresses: cellAddresses
     };
 
     // Wenn nur aktueller Monat exportiert werden soll
@@ -1448,16 +1514,7 @@ function importData(file) {
                 throw new Error(`Ungültiges Datenformat: Fehlende Felder: ${missingFields.join(', ')}`);
             }
 
-            // Speichere die Daten im localStorage
-            localStorage.setItem('employees', JSON.stringify(data.employees));
-            localStorage.setItem('assignments', JSON.stringify(data.assignments));
-            localStorage.setItem('employeeStartDates', JSON.stringify(data.employeeStartDates));
-            localStorage.setItem('employeeEndDates', JSON.stringify(data.employeeEndDates));
-            localStorage.setItem('cellNotes', JSON.stringify(data.cellNotes));
-            localStorage.setItem('cellLinks', JSON.stringify(data.cellLinks));
-            localStorage.setItem('cellAddresses', JSON.stringify(data.cellAddresses));
-
-            // Aktualisiere die globalen Variablen
+            // Speichere die Daten in Firebase
             employees = data.employees;
             assignments = data.assignments;
             employeeStartDates = data.employeeStartDates;
@@ -1465,6 +1522,17 @@ function importData(file) {
             cellNotes = data.cellNotes;
             cellLinks = data.cellLinks;
             cellAddresses = data.cellAddresses;
+            
+            // Speichere in Firebase
+            saveData('employees', employees);
+            saveData('assignments', assignments);
+            saveData('employeeStartDates', employeeStartDates);
+            saveData('employeeEndDates', employeeEndDates);
+            saveData('cellNotes', cellNotes);
+            saveData('cellLinks', cellLinks);
+            saveData('cellAddresses', cellAddresses);
+
+            // Aktualisiere die globalen Variablen (bereits oben gesetzt)
             
             // Aktualisiere die Anzeige
             updateCalendar();
@@ -1702,10 +1770,10 @@ document.getElementById('clearSelection').addEventListener('click', () => {
         });
         
         // Speichere die Änderungen im localStorage
-        localStorage.setItem('assignments', JSON.stringify(assignments));
-        localStorage.setItem('cellNotes', JSON.stringify(cellNotes));
-        localStorage.setItem('cellLinks', JSON.stringify(cellLinks));
-        localStorage.setItem('cellAddresses', JSON.stringify(cellAddresses));
+        saveData('assignments', assignments);
+        saveData('cellNotes', cellNotes);
+        saveData('cellLinks', cellLinks);
+        saveData('cellAddresses', cellAddresses);
         
         // Lösche die Auswahl
         clearSelection();

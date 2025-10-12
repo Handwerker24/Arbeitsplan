@@ -29,5 +29,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Arbeitsplan"
     }
+  },
+  "dependencies": {
+    "firebase": "^12.4.0"
   }
 }
