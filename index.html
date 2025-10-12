@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arbeitsplan</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script>
+        // Überprüfe, ob der Benutzer eingeloggt ist
+        window.onload = function() {
+            const currentUser = JSON.parse(localStorage.getItem('currentUser'));
+            if (!currentUser) {
+                window.location.href = 'login.html';
+            }
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Arbeitsplan</h1>
+            <button id="logoutButton" class="logout-button">Ausloggen</button>
+        </header>
+
+        <div class="calendar-header">
+            <div id="yearGrid" class="year-grid"></div>
+            <div id="monthGrid" class="month-grid"></div>
+        </div>
+
+        <div class="status-buttons">
+            <button class="status-button" data-status="urlaub">Urlaub</button>
+            <button class="status-button" data-status="krank">Krankheit</button>
+            <button class="status-button" data-status="unbezahlt">Unbezahlter Urlaub</button>
+            <button class="status-button" data-status="schulung">Schule</button>
+            <button class="status-button" data-status="feiertag">Feiertag</button>
+            <button class="status-button" data-status="kurzarbeit">Kurzarbeit</button>
+            <button id="clearSelection">Auswahl löschen</button>
+        </div>
+
+        <div id="infoField" class="info-field">
+            <h3>Notizen</h3>
+            <textarea id="infoText" placeholder="Notizen eingeben..."></textarea>
+            <div class="link-input">
+                <input type="text" id="linkInput" placeholder="Link eingeben...">
+                <button id="openLinkFolder" class="open-folder-btn">Ordner öffnen</button>
+            </div>
+            <div class="address-input">
+                <input type="text" id="addressInput" placeholder="Adresse eingeben...">
+                <button id="openMaps" class="maps-btn">Adresse in Maps öffnen</button>
+            </div>
+        </div>
+
+        <div class="calendar-container">
+            <table class="calendar">
+                <thead>
+                    <tr id="headerRow"></tr>
+                </thead>
+                <tbody id="calendarBody"></tbody>
+            </table>
+        </div>
+
+        <div class="bottom-buttons">
+            <button id="addEmployee">Mitarbeiter hinzufügen</button>
+            <button id="exportData">Daten exportieren</button>
+            <input type="file" id="importData" accept=".json" style="display: none;">
+            <button id="importDataBtn">Daten importieren</button>
+        </div>
+    </div>
+
+    <!-- Modal für neue Mitarbeiter -->
+    <div id="employeeModal" class="modal">
+        <div class="modal-content">
+            <h2>Mitarbeiter hinzufügen</h2>
+            <input type="text" id="employeeName" placeholder="Name des Mitarbeiters">
+            <button id="saveEmployee">Speichern</button>
+            <button id="cancelEmployee">Abbrechen</button>
+        </div>
+    </div>
+
+    <!-- Modal für Mitarbeiter löschen -->
+    <div id="deleteEmployeeModal" class="modal">
+        <div class="modal-content">
+            <h2>Mitarbeiter entfernen</h2>
+            <p>Möchten Sie den Mitarbeiter <span id="employeeToDelete"></span> wirklich entfernen?</p>
+            <button id="confirmDelete">Ja</button>
+            <button id="cancelDelete">Nein</button>
+        </div>
+    </div>
+
+    <!-- Modal für Export -->
+    <div id="exportModal" class="modal">
+        <div class="modal-content">
+            <h2>Daten exportieren</h2>
+            <div class="export-options">
+                <div class="export-range">
+                    <h3>Export-Bereich</h3>
+                    <div class="radio-group">
+                        <label>
+                            <input type="radio" name="exportRange" value="currentMonth" checked>
+                            Aktuellen Monat exportieren
+                        </label>
+                        <label>
+                            <input type="radio" name="exportRange" value="all">
+                            Gesamten Plan exportieren
+                        </label>
+                    </div>
+                </div>
+                <div class="export-formats">
+                    <h3>Dateiformate</h3>
+                    <div class="checkbox-group">
+                        <label>
+                            <input type="checkbox" name="exportFormat" value="json" checked>
+                            JSON-Datei
+                        </label>
+                        <label>
+                            <input type="checkbox" name="exportFormat" value="excel" checked>
+                            Excel-Datei
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button id="confirmExport">Exportieren</button>
+                <button id="cancelExport">Abbrechen</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html> 
