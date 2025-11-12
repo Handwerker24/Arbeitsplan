@@ -182,8 +182,13 @@ th {
 
 th:first-child {
     position: relative;
-    min-width: 150px;
-    max-width: 150px;
+    min-width: 200px;
+    width: 200px;
+}
+
+td:first-child {
+    min-width: 200px;
+    width: 200px;
 }
 
 .calendar-container.zoomed-out th:first-child {
@@ -222,10 +227,10 @@ th:first-child {
 
 .cell-text {
     text-align: center;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
     white-space: nowrap;
     width: 100%;
+    word-break: break-word;
 }
 
 .calendar-cell:hover {
@@ -289,15 +294,46 @@ th:first-child {
     width: 100%;
     height: 100%;
     background-color: rgba(0,0,0,0.5);
+    z-index: 10000; /* Sehr hoher z-index, damit es über allem liegt */
 }
 
 .modal-content {
     background-color: #fff;
-    margin: 15% auto;
+    margin: 5% auto;
     padding: 20px;
     width: 80%;
-    max-width: 500px;
+    max-width: 600px;
     border-radius: 5px;
+    position: relative;
+    z-index: 10001; /* Noch höher als das Modal */
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.close-button-x {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 30px;
+    height: 30px;
+    background-color: #dc3545;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    padding: 0;
+    transition: background-color 0.2s;
+    z-index: 10002;
+}
+
+.close-button-x:hover {
+    background-color: #c82333;
 }
 
 .modal input {
@@ -322,9 +358,10 @@ th:first-child {
     color: #333;
 }
 
-.info-field textarea {
+.info-field textarea,
+#infoText {
     width: 100%;
-    min-height: 100px;
+    min-height: 200px;
     padding: 10px;
     border: 1px solid #ddd;
     border-radius: 4px;
@@ -332,6 +369,7 @@ th:first-child {
     font-size: 14px;
     line-height: 1.4;
     margin-bottom: 10px;
+    box-sizing: border-box;
 }
 
 .info-field textarea:focus {
@@ -382,6 +420,9 @@ th:first-child {
     padding: 5px;
     border-radius: 4px;
     transition: all 0.3s ease;
+    white-space: normal;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
 .name-container:hover {
@@ -510,29 +551,118 @@ th:first-child {
 /* Responsive Design */
 @media (max-width: 768px) {
     .container {
+        padding: 5px;
+    }
+    
+    header {
         padding: 10px;
+        margin-bottom: 10px;
+    }
+    
+    h1 {
+        font-size: 1.5em;
     }
     
     .year-grid, .month-grid {
-        grid-template-columns: repeat(6, 1fr);
+        grid-template-columns: repeat(4, 1fr);
+        gap: 5px;
+        margin-bottom: 10px;
+    }
+    
+    .year-button, .month-button {
+        padding: 6px;
+        font-size: 0.9em;
     }
     
     .status-buttons {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 5px;
+        padding: 10px;
+        margin-bottom: 10px;
+    }
+    
+    .status-button {
+        padding: 6px 10px;
+        font-size: 0.85em;
+        flex: 1 1 auto;
+        min-width: calc(50% - 5px);
+    }
+    
+    .bottom-buttons {
+        display: flex;
         flex-direction: column;
+        gap: 5px;
+        margin-top: 10px;
+    }
+    
+    .bottom-buttons button {
+        width: 100%;
+        padding: 10px;
+        font-size: 0.9em;
+    }
+    
+    /* Buttons in mobiler Ansicht ausblenden */
+    #toggleView,
+    #exportData,
+    #importDataBtn,
+    #showAuditLog {
+        display: none !important;
     }
     
     th, td {
-        padding: 4px;
-        font-size: 14px;
+        padding: 3px;
+        font-size: 0.75em;
     }
 
     .calendar-container {
         overflow-x: auto;
+        overflow-y: auto;
         position: relative;
+        -webkit-overflow-scrolling: touch;
+        max-height: calc(100vh - 250px);
+        min-height: 400px;
     }
 
     .calendar {
         min-width: 100%;
+        font-size: 0.8em;
+    }
+
+    .calendar-cell {
+        min-width: 50px;
+        padding: 3px;
+        font-size: 0.7em;
+    }
+    
+    .cell-text {
+        font-size: 0.7em;
+        line-height: 1.2;
+    }
+    
+    .name-container {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        flex-wrap: wrap;
+    }
+    
+    .name-container span {
+        font-size: 1em;
+        font-weight: 500;
+        flex: 1;
+        min-width: 60px;
+    }
+    
+    /* Pfeilbuttons in mobiler Ansicht ausblenden */
+    .move-employee {
+        display: none !important;
+    }
+    
+    .delete-employee {
+        font-size: 0.7em;
+        padding: 2px 4px;
+        min-width: 20px;
     }
 
     .week-view {
@@ -550,7 +680,7 @@ th:first-child {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 10px;
+        padding: 8px;
         background: #f8f9fa;
         border-bottom: 1px solid #dee2e6;
         position: sticky;
@@ -559,14 +689,14 @@ th:first-child {
     }
 
     .week-nav-button {
-        padding: 5px 15px;
+        padding: 8px 12px;
         background: #007bff;
         color: white;
         border: none;
         border-radius: 4px;
         cursor: pointer;
-        font-size: 16px;
-        min-width: 40px;
+        font-size: 14px;
+        min-width: 35px;
     }
 
     .week-nav-button:disabled {
@@ -579,11 +709,12 @@ th:first-child {
         font-weight: bold;
         padding: 5px;
         flex-grow: 1;
-        margin: 0 10px;
+        margin: 0 5px;
+        font-size: 0.9em;
     }
 
     .calendar th, .calendar td {
-        min-width: 60px;
+        min-width: 50px;
     }
 
     .calendar th:first-child, .calendar td:first-child {
@@ -591,6 +722,60 @@ th:first-child {
         left: 0;
         background: white;
         z-index: 1;
+        min-width: 80px;
+        width: 80px;
+        box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+    }
+    
+    /* Pfeilbuttons in mobiler Ansicht ausblenden */
+    .move-employee {
+        display: none !important;
+    }
+    
+    /* Namen größer in mobiler Ansicht */
+    .name-container span {
+        font-size: 1em !important;
+        font-weight: 500;
+    }
+    
+    .modal-content {
+        max-width: 95%;
+        max-height: 90vh;
+        overflow-y: auto;
+        padding: 15px;
+    }
+    
+    .info-field .modal-content {
+        max-width: 95%;
+    }
+    
+    .audit-log-entry {
+        padding: 8px;
+        margin-bottom: 8px;
+        border-bottom: 1px solid #ddd;
+        font-size: 0.85em;
+    }
+    
+    .audit-log-time {
+        font-weight: bold;
+        color: #666;
+        font-size: 0.9em;
+    }
+    
+    .audit-log-user {
+        color: #007bff;
+        font-weight: bold;
+    }
+    
+    .audit-log-action {
+        color: #333;
+        margin: 3px 0;
+    }
+    
+    .audit-log-details {
+        color: #666;
+        font-size: 0.8em;
+        word-break: break-word;
     }
 }
 
@@ -631,6 +816,7 @@ th:first-child {
     gap: 10px;
     margin-top: 20px;
 }
+
 
 #confirmExport {
     background-color: #28a745;
@@ -678,4 +864,54 @@ th:first-child {
 	pointer-events: none;
 }
 
-.calendar-cell.abgerechnet-bg { background-color: #e8f5e9 !important; } 
+.calendar-cell.abgerechnet-bg { background-color: #e8f5e9 !important; }
+
+/* Audit Log Styles */
+.audit-log-container {
+    max-height: 60vh;
+    overflow-y: auto;
+    margin: 20px 0;
+}
+
+.audit-log-entry {
+    padding: 12px;
+    margin-bottom: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: #f8f9fa;
+    transition: background-color 0.2s;
+}
+
+.audit-log-entry:hover {
+    background-color: #e9ecef;
+}
+
+.audit-log-time {
+    font-weight: bold;
+    color: #666;
+    font-size: 0.9em;
+    margin-bottom: 5px;
+}
+
+.audit-log-user {
+    color: #007bff;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.audit-log-action {
+    color: #333;
+    margin: 5px 0;
+    font-weight: 500;
+}
+
+.audit-log-details {
+    color: #666;
+    font-size: 0.85em;
+    word-break: break-word;
+    margin-top: 5px;
+    font-family: monospace;
+    background-color: white;
+    padding: 5px;
+    border-radius: 3px;
+} 

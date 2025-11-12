@@ -13,64 +13,203 @@ let copiedContent = null; // Speichert den kopierten Inhalt
 let isZoomedOut = false;
 let cellAddresses = {};
 let isWeekView = false; // Neue Variable für den Ansichtsmodus
-let firebaseDB = null; // Firebase Database Instanz
+// firebaseDB wird in firebase-simple.js deklariert
 
 // Undo-Funktionalität
 let undoStack = [];
 const MAX_UNDO_STEPS = 10;
 
-// Firebase Initialisierung
+// Protokoll-Funktionalität
+let auditLog = JSON.parse(localStorage.getItem('auditLog')) || [];
+
+// Firebase-Initialisierung
 async function initializeFirebase() {
-    try {
-        // Verwende die globale Firebase-Instanz
-        firebaseDB = window.firebaseDB;
-        
-        if (!firebaseDB) {
-            throw new Error('Firebase nicht verfügbar');
+    console.log('Starte Firebase-Initialisierung...');
+    console.log('Firebase verfügbar:', typeof firebase !== 'undefined');
+    console.log('window.firebaseDB verfügbar:', !!window.firebaseDB);
+    
+    // Warte bis Firebase geladen ist
+    if (typeof firebase === 'undefined') {
+        console.error('Firebase SDK nicht geladen - verwende localStorage');
+        loadDataFromLocalStorage();
+        return;
+    }
+    
+    // Prüfe, ob der Benutzer authentifiziert ist
+    if (firebase.auth) {
+        const currentUser = firebase.auth().currentUser;
+        if (!currentUser) {
+            console.warn('Benutzer nicht authentifiziert - Firebase-Daten können nicht geladen werden');
+            // Versuche trotzdem zu laden (falls Rules es erlauben)
+        } else {
+            console.log('Benutzer authentifiziert:', currentUser.email);
         }
+    }
+
+    // Warte bis firebaseDB verfügbar ist (maximal 10 Sekunden)
+    let attempts = 0;
+    const maxAttempts = 100;
+    while (!window.firebaseDB && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+        if (attempts % 10 === 0) {
+            console.log(`Warte auf FirebaseDB... (${attempts}/${maxAttempts})`);
+        }
+    }
+
+    if (window.firebaseDB) {
+        console.log('Firebase DB Instanz gefunden, lade Daten...');
         
         // Lade alle Daten aus Firebase
-        const data = await firebaseDB.loadAllData();
-        employees = data.employees;
-        assignments = data.assignments;
-        employeeStartDates = data.employeeStartDates;
-        employeeEndDates = data.employeeEndDates;
-        cellNotes = data.cellNotes;
-        cellLinks = data.cellLinks;
-        cellAddresses = data.cellAddresses;
-        
-        console.log('Firebase erfolgreich initialisiert');
-        return true;
-    } catch (error) {
-        console.error('Fehler bei Firebase-Initialisierung:', error);
-        throw error;
+        try {
+            const data = await window.firebaseDB.loadAllData();
+            console.log('Rohdaten aus Firebase:', data);
+            
+            // Überschreibe IMMER mit Daten aus Firebase (auch wenn leer)
+            // Firebase hat Vorrang vor localStorage
+            employees = data.employees || [];
+            assignments = data.assignments || {};
+            employeeStartDates = data.employeeStartDates || {};
+            employeeEndDates = data.employeeEndDates || {};
+            cellNotes = data.cellNotes || {};
+            cellLinks = data.cellLinks || {};
+            cellAddresses = data.cellAddresses || {};
+            
+            console.log('Daten aus Firebase geladen (Firebase hat Vorrang):', { 
+                employees: employees.length, 
+                assignments: Object.keys(assignments).length,
+                employeeStartDates: Object.keys(employeeStartDates).length,
+                employeeEndDates: Object.keys(employeeEndDates).length,
+                cellNotes: Object.keys(cellNotes).length,
+                cellLinks: Object.keys(cellLinks).length,
+                cellAddresses: Object.keys(cellAddresses).length
+            });
+            
+            // Wenn Firebase leer ist, migriere Daten aus localStorage zu Firebase
+            if (employees.length === 0 && Object.keys(assignments).length === 0) {
+                console.log('Firebase ist leer, prüfe localStorage für Migration...');
+                const localEmployees = JSON.parse(localStorage.getItem('employees')) || [];
+                const localAssignments = JSON.parse(localStorage.getItem('assignments')) || {};
+                
+                if (localEmployees.length > 0 || Object.keys(localAssignments).length > 0) {
+                    console.log('Daten in localStorage gefunden, migriere zu Firebase...');
+                    // Lade aus localStorage
+                    loadDataFromLocalStorage();
+                    // Speichere dann in Firebase
+                    saveData('employees', employees);
+                    saveData('assignments', assignments);
+                    saveData('employeeStartDates', employeeStartDates);
+                    saveData('employeeEndDates', employeeEndDates);
+                    saveData('cellNotes', cellNotes);
+                    saveData('cellLinks', cellLinks);
+                    saveData('cellAddresses', cellAddresses);
+                    console.log('Daten von localStorage zu Firebase migriert');
+                } else {
+                    console.log('Auch localStorage ist leer, starte mit leeren Daten');
+                }
+            }
+        } catch (error) {
+            console.error('Fehler beim Laden aus Firebase:', error);
+            console.log('Verwende localStorage als Fallback');
+            loadDataFromLocalStorage();
+        }
+    } else {
+        console.warn('FirebaseDB nach', maxAttempts, 'Versuchen nicht verfügbar, verwende localStorage');
+        loadDataFromLocalStorage();
     }
 }
 
-// Speichere Daten in Firebase
+// Fallback: Daten aus localStorage laden
+function loadDataFromLocalStorage() {
+    employees = JSON.parse(localStorage.getItem('employees')) || [];
+    assignments = JSON.parse(localStorage.getItem('assignments')) || {};
+    employeeStartDates = JSON.parse(localStorage.getItem('employeeStartDates')) || {};
+    employeeEndDates = JSON.parse(localStorage.getItem('employeeEndDates')) || {};
+    cellNotes = JSON.parse(localStorage.getItem('cellNotes')) || {};
+    cellLinks = JSON.parse(localStorage.getItem('cellLinks')) || {};
+    cellAddresses = JSON.parse(localStorage.getItem('cellAddresses')) || {};
+    console.log('Daten aus localStorage geladen');
+}
+
+// Daten speichern (Firebase oder localStorage)
 async function saveData(key, data) {
-    if (!firebaseDB) {
-        throw new Error('Firebase nicht verfügbar');
+    const db = window.firebaseDB || firebaseDB;
+    if (db) {
+        try {
+            await db.saveData(key, data);
+        } catch (error) {
+            console.error(`Fehler beim Speichern in Firebase (${key}):`, error);
+            // Fallback zu localStorage
+            localStorage.setItem(key, JSON.stringify(data));
+        }
+    } else {
+        // Fallback zu localStorage
+        localStorage.setItem(key, JSON.stringify(data));
+    }
+}
+
+function addToAuditLog(action, details) {
+    const currentUser = JSON.parse(localStorage.getItem('currentUser')) || { username: 'Unbekannt', name: 'Unbekannt' };
+    const username = currentUser.name || currentUser.username || 'Unbekannt';
+    const logEntry = {
+        timestamp: new Date().toISOString(),
+        user: username,
+        action: action,
+        details: details
+    };
+    auditLog.push(logEntry);
+    // Behalte nur die letzten 1000 Einträge
+    if (auditLog.length > 1000) {
+        auditLog = auditLog.slice(-1000);
+    }
+    localStorage.setItem('auditLog', JSON.stringify(auditLog));
+    console.log('Audit Log:', logEntry);
+}
+
+function showAuditLog() {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.id = 'auditLogModal';
+    modal.style.display = 'block';
+    
+    const logEntries = JSON.parse(localStorage.getItem('auditLog')) || [];
+    const logHTML = logEntries.slice().reverse().map(entry => {
+        const date = new Date(entry.timestamp);
+        const dateStr = date.toLocaleString('de-DE');
+        return `
+            <div class="audit-log-entry">
+                <div class="audit-log-time">${dateStr}</div>
+                <div class="audit-log-user">${entry.user}</div>
+                <div class="audit-log-action">${entry.action}</div>
+                <div class="audit-log-details">${JSON.stringify(entry.details)}</div>
+            </div>
+        `;
+    }).join('');
+    
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+            <h2>Änderungsprotokoll</h2>
+            <div class="audit-log-container">
+                ${logEntries.length === 0 ? '<p>Keine Einträge vorhanden.</p>' : logHTML}
+            </div>
+            <button id="closeAuditLog" style="margin-top: 20px;">Schließen</button>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    const closeBtn = document.getElementById('closeAuditLog');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            modal.remove();
+        });
     }
     
-    switch(key) {
-        case 'employees':
-            return await firebaseDB.saveEmployees(data);
-        case 'assignments':
-            return await firebaseDB.saveAssignments(data);
-        case 'employeeStartDates':
-            return await firebaseDB.saveEmployeeStartDates(data);
-        case 'employeeEndDates':
-            return await firebaseDB.saveEmployeeEndDates(data);
-        case 'cellNotes':
-            return await firebaseDB.saveCellNotes(data);
-        case 'cellLinks':
-            return await firebaseDB.saveCellLinks(data);
-        case 'cellAddresses':
-            return await firebaseDB.saveCellAddresses(data);
-        default:
-            throw new Error('Unbekannter Datentyp: ' + key);
-    }
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.remove();
+        }
+    });
 }
 
 function saveState() {
@@ -105,34 +244,35 @@ function undo() {
 }
 
 // Logout-Funktionalität
-document.getElementById('logoutButton').addEventListener('click', function() {
+document.getElementById('logoutButton').addEventListener('click', async function() {
+    // Firebase Auth Sign Out
+    if (typeof firebase !== 'undefined' && firebase.auth) {
+        try {
+            await firebase.auth().signOut();
+            console.log('Erfolgreich ausgeloggt');
+        } catch (error) {
+            console.error('Fehler beim Ausloggen:', error);
+        }
+    }
+    
     // Lösche die Benutzerinformationen aus dem localStorage
     localStorage.removeItem('currentUser');
     // Leite zur Login-Seite weiter
     window.location.href = 'login.html';
 });
 
-// DOM-Elemente
-const yearGrid = document.getElementById('yearGrid');
-const monthGrid = document.getElementById('monthGrid');
-const calendarBody = document.getElementById('calendarBody');
-const headerRow = document.getElementById('headerRow');
-const employeeModal = document.getElementById('employeeModal');
-const employeeNameInput = document.getElementById('employeeName');
-const deleteEmployeeModal = document.getElementById('deleteEmployeeModal');
-const employeeToDeleteSpan = document.getElementById('employeeToDelete');
-const infoField = document.getElementById('infoField');
-const infoText = document.getElementById('infoText');
-const zoomOutButton = document.getElementById('zoomOut');
+// DOM-Elemente (werden beim Initialisieren gesetzt)
+let yearGrid, monthGrid, calendarBody, headerRow, employeeModal, employeeNameInput;
+let deleteEmployeeModal, employeeToDeleteSpan, infoField, infoText, zoomOutButton;
 let currentEditingCell = null;
 
 // Event Listener für das Modal
-document.getElementById('addEmployee').addEventListener('click', () => {
-    employeeModal.style.display = 'block';
-    employeeNameInput.value = '';
-    employeeNameInput.focus();
-    // Verhindere, dass der Klick-Event weiter propagiert wird
-    event.stopPropagation();
+document.getElementById('addEmployee')?.addEventListener('click', () => {
+    if (employeeModal && employeeNameInput) {
+        employeeModal.style.display = 'block';
+        employeeNameInput.value = '';
+        employeeNameInput.focus();
+    }
 });
 
 // Füge den Toggle-Button für die Ansicht hinzu
@@ -146,76 +286,129 @@ toggleViewButton.addEventListener('click', () => {
     updateCalendar();
 });
 
-// Füge den Button neben dem "Mitarbeiter hinzufügen" Button ein
-const addEmployeeButton = document.getElementById('addEmployee');
-addEmployeeButton.parentNode.insertBefore(toggleViewButton, addEmployeeButton.nextSibling);
+// Event Listener Setup (wird nach Initialisierung aufgerufen)
+function setupToggleViewButton() {
+    // Füge den Toggle-Button neben dem "Mitarbeiter hinzufügen" Button ein
+    const addEmployeeButton = document.getElementById('addEmployee');
+    if (addEmployeeButton && addEmployeeButton.parentNode) {
+        addEmployeeButton.parentNode.insertBefore(toggleViewButton, addEmployeeButton.nextSibling);
+    }
+}
 
-// Event Listener für Speichern
-document.getElementById('saveEmployee').addEventListener('click', () => {
-    let name = employeeNameInput.value.trim();
-    if (name) {
-        // Wenn der Name bereits existiert, füge eine Nummer hinzu
-        if (employees.includes(name)) {
-            name = name + ' 2';
+// Event Listener Setup (wird nach Initialisierung aufgerufen)
+function setupEventListeners() {
+    // Event Listener für Speichern
+    const saveEmployeeBtn = document.getElementById('saveEmployee');
+    if (saveEmployeeBtn && employeeNameInput) {
+        saveEmployeeBtn.addEventListener('click', () => {
+            let name = employeeNameInput.value.trim();
+            if (name) {
+                // Wenn der Name bereits existiert, füge eine Nummer hinzu
+                if (employees.includes(name)) {
+                    name = name + ' 2';
+                }
+                
+                employees.push(name);
+                // Setze das Startdatum auf den ersten Tag des ausgewählten Monats
+                const startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 2);
+                console.log('Startdatum:', startDate);
+                employeeStartDates[name] = startDate.toISOString().split('T')[0];
+                
+                // Setze das Enddatum auf ein weit entferntes Datum
+                const endDate = new Date('2100-12-31');
+                employeeEndDates[name] = endDate.toISOString().split('T')[0];
+                
+                saveData('employees', employees);
+                saveData('employeeStartDates', employeeStartDates);
+                saveData('employeeEndDates', employeeEndDates);
+                
+                addToAuditLog('Mitarbeiter hinzugefügt', { employee: name });
+                
+                updateCalendar();
+                if (employeeModal) employeeModal.style.display = 'none';
+            } else {
+                alert('Bitte geben Sie einen gültigen Namen ein.');
+                if (employeeNameInput) employeeNameInput.focus();
+            }
+        });
+    }
+    
+    // Event Listener für Abbrechen
+    const cancelEmployeeBtn = document.getElementById('cancelEmployee');
+    if (cancelEmployeeBtn) {
+        cancelEmployeeBtn.addEventListener('click', () => {
+            if (employeeModal && employeeNameInput) {
+                employeeModal.style.display = 'none';
+                employeeNameInput.value = '';
+            }
+        });
+    }
+
+    // Event Listener für Enter-Taste im Modal
+    if (employeeNameInput) {
+        employeeNameInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const saveBtn = document.getElementById('saveEmployee');
+                if (saveBtn) saveBtn.click();
+            }
+        });
+    }
+
+    // Event Listener für Klick außerhalb des Modals
+    if (employeeModal && employeeNameInput) {
+        employeeModal.addEventListener('click', (e) => {
+            if (e.target === employeeModal) {
+                employeeModal.style.display = 'none';
+                employeeNameInput.value = '';
+            }
+        });
+    }
+
+    // Event Listener für Escape-Taste
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && employeeModal && employeeModal.style.display === 'block') {
+            employeeModal.style.display = 'none';
+            if (employeeNameInput) employeeNameInput.value = '';
         }
-        
-        employees.push(name);
-        // Setze das Startdatum auf den ersten Tag des ausgewählten Monats
-        const startDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 2);
-        console.log('Startdatum:', startDate);
-        employeeStartDates[name] = startDate.toISOString().split('T')[0];
-        
-        // Setze das Enddatum auf ein weit entferntes Datum
-        const endDate = new Date('2100-12-31');
-        employeeEndDates[name] = endDate.toISOString().split('T')[0];
-        
-        saveData('employees', employees);
-        saveData('employeeStartDates', employeeStartDates);
-        saveData('employeeEndDates', employeeEndDates);
-        
-        updateCalendar();
-        employeeModal.style.display = 'none';
-    } else {
-        alert('Bitte geben Sie einen gültigen Namen ein.');
-        employeeNameInput.focus();
-    }
-});
+    });
 
-// Event Listener für Abbrechen
-document.getElementById('cancelEmployee').addEventListener('click', () => {
-    employeeModal.style.display = 'none';
-    employeeNameInput.value = '';
-});
-
-// Event Listener für Enter-Taste im Modal
-employeeNameInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-        document.getElementById('saveEmployee').click();
+    // Automatisches Speichern der Notizen
+    if (infoText) {
+        infoText.addEventListener('input', () => {
+            if (currentEditingCell) {
+                saveCellNote();
+            }
+        });
     }
-});
-
-// Event Listener für Klick außerhalb des Modals
-employeeModal.addEventListener('click', (e) => {
-    if (e.target === employeeModal) {
-        employeeModal.style.display = 'none';
-        employeeNameInput.value = '';
+    
+    // Event Listener für das Lösch-Modal
+    const confirmDeleteBtn = document.getElementById('confirmDelete');
+    const cancelDeleteBtn = document.getElementById('cancelDelete');
+    
+    if (confirmDeleteBtn) {
+        confirmDeleteBtn.addEventListener('click', confirmDeleteEmployee);
     }
-});
-
-// Event Listener für Escape-Taste
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && employeeModal.style.display === 'block') {
-        employeeModal.style.display = 'none';
-        employeeNameInput.value = '';
+    
+    if (cancelDeleteBtn) {
+        cancelDeleteBtn.addEventListener('click', hideDeleteEmployeeModal);
     }
-});
-
-// Automatisches Speichern der Notizen
-infoText.addEventListener('input', () => {
-    if (currentEditingCell) {
-        saveCellNote();
+    
+    // Event Listener für Klick außerhalb des Lösch-Modals
+    if (deleteEmployeeModal) {
+        deleteEmployeeModal.addEventListener('click', (e) => {
+            if (e.target === deleteEmployeeModal) {
+                hideDeleteEmployeeModal();
+            }
+        });
     }
-});
+    
+    // Event Listener für Escape-Taste im Lösch-Modal
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && deleteEmployeeModal && deleteEmployeeModal.style.display === 'block') {
+            hideDeleteEmployeeModal();
+        }
+    });
+}
 
 // Event Listener für das Ende der Auswahl
 document.addEventListener('mouseup', () => {
@@ -232,14 +425,14 @@ document.addEventListener('click', (e) => {
 
 // Status-Button Event Listener
 document.querySelectorAll('.status-button').forEach(button => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
         const status = button.dataset.status;
-        applyStatusToSelectedCells(status);
+        await applyStatusToSelectedCells(status);
     });
 });
 
 // Event Listener für Tastaturkürzel
-document.addEventListener('keydown', (e) => {
+document.addEventListener('keydown', async (e) => {
     // Strg+Z für Undo
     if (e.ctrlKey && e.key === 'z') {
         e.preventDefault();
@@ -276,9 +469,9 @@ document.addEventListener('keydown', (e) => {
             }
         });
         
-        saveData('cellNotes', cellNotes);
-        saveData('cellLinks', cellLinks);
-        saveData('assignments', assignments);
+        await saveData('cellNotes', cellNotes);
+        await saveData('cellLinks', cellLinks);
+        await saveData('assignments', assignments);
     }
     
     // Strg+C
@@ -384,30 +577,62 @@ document.addEventListener('keydown', (e) => {
             }
         });
         
-        saveData('cellNotes', cellNotes);
-        saveData('cellLinks', cellLinks);
-        saveData('cellAddresses', cellAddresses);
-        saveData('assignments', assignments);
+        await saveData('cellNotes', cellNotes);
+        await saveData('cellLinks', cellLinks);
+        await saveData('cellAddresses', cellAddresses);
+        await saveData('assignments', assignments);
     }
 });
 
 // Initialisierung
 async function initializeApp() {
-    try {
-        await initializeFirebase();
+    console.log('Initialisiere App...');
+    
+    // Initialisiere Firebase zuerst
+    await initializeFirebase();
+    
+    // Setze DOM-Elemente
+    yearGrid = document.getElementById('yearGrid');
+    monthGrid = document.getElementById('monthGrid');
+    calendarBody = document.getElementById('calendarBody');
+    headerRow = document.getElementById('headerRow');
+    employeeModal = document.getElementById('employeeModal');
+    employeeNameInput = document.getElementById('employeeName');
+    deleteEmployeeModal = document.getElementById('deleteEmployeeModal');
+    employeeToDeleteSpan = document.getElementById('employeeToDelete');
+    infoField = document.getElementById('infoField');
+    infoText = document.getElementById('infoText');
+    zoomOutButton = document.getElementById('zoomOut');
+    
+    console.log('Mitarbeiter:', employees);
+    console.log('DOM-Elemente:', { yearGrid: !!yearGrid, monthGrid: !!monthGrid });
+    
+    if (yearGrid && monthGrid) {
         initializeYearGrid();
         initializeMonthGrid();
+        setupToggleViewButton();
         updateCalendar();
-    } catch (error) {
-        console.error('App konnte nicht initialisiert werden:', error);
-        alert('Fehler beim Laden der App. Bitte überprüfen Sie Ihre Internetverbindung und laden Sie die Seite neu.');
+        setupInfoFieldListeners();
+        setupEventListeners();
+        console.log('App initialisiert');
+    } else {
+        console.error('DOM-Elemente nicht gefunden!');
+        // Versuche es nochmal nach kurzer Verzögerung
+        setTimeout(initializeApp, 100);
     }
 }
 
-// Starte die App
-initializeApp();
+// Starte Initialisierung wenn alles geladen ist
+window.addEventListener('load', function() {
+    // Warte kurz, damit alle Scripts geladen sind
+    setTimeout(initializeApp, 100);
+});
 
 function initializeYearGrid() {
+    if (!yearGrid) {
+        console.error('yearGrid nicht gefunden!');
+        return;
+    }
     const currentYear = currentDate.getFullYear();
     yearGrid.innerHTML = '';
     
@@ -429,6 +654,10 @@ function initializeYearGrid() {
 }
 
 function initializeMonthGrid() {
+    if (!monthGrid) {
+        console.error('monthGrid nicht gefunden!');
+        return;
+    }
     const months = [
         'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
         'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'
@@ -462,7 +691,13 @@ function updateCalendar() {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     
-    console.log('Update Calendar:', { year, month, isWeekView });
+    console.log('Update Calendar:', { year, month, isWeekView, employeesCount: employees.length });
+    console.log('Mitarbeiter Liste:', employees);
+    
+    if (!yearGrid || !monthGrid) {
+        console.error('DOM-Elemente nicht verfügbar für updateCalendar');
+        return;
+    }
     
     if (window.innerWidth <= 768) {
         setupMobileWeekView();
@@ -528,11 +763,17 @@ function setupDesktopWeekView() {
     
     // Füge nur aktive Mitarbeiter hinzu
     employees.forEach(employee => {
-        const startDate = new Date(employeeStartDates[employee] || '2000-01-01');
-        const endDate = employeeEndDates[employee] ? new Date(employeeEndDates[employee]) : new Date('2100-12-31');
-        const currentMonthDate = new Date(currentDate);
+        // Wenn keine Start-/Enddaten vorhanden sind, zeige den Mitarbeiter immer an
+        let shouldShow = true;
         
-        if (isDateInRange(currentMonthDate, startDate, endDate)) {
+        if (employeeStartDates[employee] || employeeEndDates[employee]) {
+            const startDate = new Date(employeeStartDates[employee] || '2000-01-01');
+            const endDate = employeeEndDates[employee] ? new Date(employeeEndDates[employee]) : new Date('2100-12-31');
+            const currentMonthDate = new Date(currentDate);
+            shouldShow = isDateInRange(currentMonthDate, startDate, endDate);
+        }
+        
+        if (shouldShow) {
             const row = document.createElement('tr');
             const nameCell = document.createElement('td');
             
@@ -542,6 +783,29 @@ function setupDesktopWeekView() {
             const nameSpan = document.createElement('span');
             nameSpan.textContent = employee;
             nameContainer.appendChild(nameSpan);
+            
+            // Verschiebe-Buttons
+            const moveUpButton = document.createElement('button');
+            moveUpButton.className = 'move-employee';
+            moveUpButton.textContent = '↑';
+            moveUpButton.title = 'Nach oben verschieben';
+            moveUpButton.style.cssText = 'margin: 0 2px; padding: 2px 6px; font-size: 12px;';
+            moveUpButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                moveEmployee(employee, 'up');
+            });
+            nameContainer.appendChild(moveUpButton);
+            
+            const moveDownButton = document.createElement('button');
+            moveDownButton.className = 'move-employee';
+            moveDownButton.textContent = '↓';
+            moveDownButton.title = 'Nach unten verschieben';
+            moveDownButton.style.cssText = 'margin: 0 2px; padding: 2px 6px; font-size: 12px;';
+            moveDownButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                moveEmployee(employee, 'down');
+            });
+            nameContainer.appendChild(moveDownButton);
             
             const deleteButton = document.createElement('button');
             deleteButton.className = 'delete-employee';
@@ -573,8 +837,14 @@ function setupDesktopMonthView() {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     
+    console.log('setupDesktopMonthView:', { year, month, employeesCount: employees.length });
+    
     // Erstelle neue Tabelle
     const calendarContainer = document.querySelector('.calendar-container');
+    if (!calendarContainer) {
+        console.error('calendar-container nicht gefunden!');
+        return;
+    }
     calendarContainer.innerHTML = '';
     
     const calendar = document.createElement('table');
@@ -587,6 +857,7 @@ function setupDesktopMonthView() {
     
     // Füge Tage zum Header hinzu
     const daysInMonth = new Date(year, month + 1, 0).getDate();
+    console.log('Tage im Monat:', daysInMonth);
     for (let day = 1; day <= daysInMonth; day++) {
         const date = new Date(year, month, day);
         const isWeekend = date.getDay() === 0 || date.getDay() === 6;
@@ -611,13 +882,30 @@ function setupDesktopMonthView() {
     // Erstelle Body
     const tbody = document.createElement('tbody');
     
+    console.log('Verarbeite Mitarbeiter:', employees.length);
+    
     // Füge Mitarbeiter-Zeilen hinzu
-    employees.forEach(employee => {
-        const startDate = new Date(employeeStartDates[employee] || '2000-01-01');
-        const endDate = employeeEndDates[employee] ? new Date(employeeEndDates[employee]) : new Date('2100-12-31');
-        const currentMonthDate = new Date(year, month, 1);
+    employees.forEach((employee, index) => {
+        // Wenn keine Start-/Enddaten vorhanden sind, zeige den Mitarbeiter immer an
+        let shouldShow = true;
         
-        if (isDateInRange(currentMonthDate, startDate, endDate)) {
+        if (employeeStartDates[employee] || employeeEndDates[employee]) {
+            const startDate = new Date(employeeStartDates[employee] || '2000-01-01');
+            const endDate = employeeEndDates[employee] ? new Date(employeeEndDates[employee]) : new Date('2100-12-31');
+            const currentMonthDate = new Date(year, month, 1);
+            shouldShow = isDateInRange(currentMonthDate, startDate, endDate);
+            console.log(`Mitarbeiter ${employee} (${index}):`, { 
+                shouldShow, 
+                startDate: startDate.toISOString(), 
+                endDate: endDate.toISOString(),
+                currentMonth: currentMonthDate.toISOString()
+            });
+        } else {
+            console.log(`Mitarbeiter ${employee} (${index}): Keine Start-/Enddaten, zeige immer an`);
+        }
+        
+        if (shouldShow) {
+            console.log(`Füge Mitarbeiter hinzu: ${employee}`);
             const row = document.createElement('tr');
             const nameCell = document.createElement('td');
             
@@ -627,6 +915,29 @@ function setupDesktopMonthView() {
             const nameSpan = document.createElement('span');
             nameSpan.textContent = employee;
             nameContainer.appendChild(nameSpan);
+            
+            // Verschiebe-Buttons
+            const moveUpButton = document.createElement('button');
+            moveUpButton.className = 'move-employee';
+            moveUpButton.textContent = '↑';
+            moveUpButton.title = 'Nach oben verschieben';
+            moveUpButton.style.cssText = 'margin: 0 2px; padding: 2px 6px; font-size: 12px;';
+            moveUpButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                moveEmployee(employee, 'up');
+            });
+            nameContainer.appendChild(moveUpButton);
+            
+            const moveDownButton = document.createElement('button');
+            moveDownButton.className = 'move-employee';
+            moveDownButton.textContent = '↓';
+            moveDownButton.title = 'Nach unten verschieben';
+            moveDownButton.style.cssText = 'margin: 0 2px; padding: 2px 6px; font-size: 12px;';
+            moveDownButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                moveEmployee(employee, 'down');
+            });
+            nameContainer.appendChild(moveDownButton);
             
             const deleteButton = document.createElement('button');
             deleteButton.className = 'delete-employee';
@@ -709,8 +1020,25 @@ function setupDesktopMonthView() {
                     }
                 });
                 
+                // Einfacher Klick öffnet das Notizfeld (nur anzeigen)
+                let clickTimeout;
+                // Einfacher Klick schließt nur das alte Notizfeld, wenn es eine andere Zelle ist
+                cell.addEventListener('click', (e) => {
+                    clearTimeout(clickTimeout);
+                    clickTimeout = setTimeout(() => {
+                        // Schließe das alte Notizfeld, wenn es eine andere Zelle ist
+                        if (currentEditingCell && currentEditingCell !== cell) {
+                            closeInfoField();
+                        }
+                        // Öffne das Popup NICHT bei einfachem Klick
+                    }, 200); // Warte auf möglichen Doppelklick
+                });
+                
+                // Doppelklick öffnet das Notizfeld zum Schreiben
                 cell.addEventListener('dblclick', (e) => {
-                    showInfoField(cell, employee, dateKey);
+                    clearTimeout(clickTimeout);
+                    e.preventDefault();
+                    showInfoField(cell, employee, dateKey, true);
                 });
                 
                 row.appendChild(cell);
@@ -720,8 +1048,27 @@ function setupDesktopMonthView() {
         }
     });
     
+    // Wenn keine Mitarbeiter vorhanden sind, zeige eine Meldung
+    if (tbody.children.length === 0) {
+        const emptyRow = document.createElement('tr');
+        const emptyCell = document.createElement('td');
+        emptyCell.colSpan = daysInMonth + 1;
+        emptyCell.style.textAlign = 'center';
+        emptyCell.style.padding = '20px';
+        emptyCell.style.color = '#666';
+        emptyCell.textContent = 'Keine Mitarbeiter vorhanden. Klicken Sie auf "Mitarbeiter hinzufügen" um zu beginnen.';
+        emptyRow.appendChild(emptyCell);
+        tbody.appendChild(emptyRow);
+        console.warn('WARNUNG: Keine Mitarbeiter-Zeilen erstellt!');
+        console.warn('Mitarbeiter-Array:', employees);
+        console.warn('Mitarbeiter Startdaten:', employeeStartDates);
+        console.warn('Mitarbeiter Enddaten:', employeeEndDates);
+    }
+    
     calendar.appendChild(tbody);
     calendarContainer.appendChild(calendar);
+    
+    console.log(`Kalender erstellt: ${tbody.children.length} Zeilen, ${daysInMonth} Tage`);
 }
 
 function showCurrentWeek() {
@@ -843,8 +1190,25 @@ function showCurrentWeek() {
                 }
             });
             
+            // Einfacher Klick öffnet das Notizfeld (nur anzeigen)
+            let clickTimeout;
+            // Einfacher Klick schließt nur das alte Notizfeld, wenn es eine andere Zelle ist
+            cell.addEventListener('click', (e) => {
+                clearTimeout(clickTimeout);
+                clickTimeout = setTimeout(() => {
+                    // Schließe das alte Notizfeld, wenn es eine andere Zelle ist
+                    if (currentEditingCell && currentEditingCell !== cell) {
+                        closeInfoField();
+                    }
+                    // Öffne das Popup NICHT bei einfachem Klick
+                }, 200); // Warte auf möglichen Doppelklick
+            });
+            
+            // Doppelklick öffnet das Notizfeld zum Schreiben
             cell.addEventListener('dblclick', (e) => {
-                showInfoField(cell, employee, dateKey);
+                clearTimeout(clickTimeout);
+                e.preventDefault();
+                showInfoField(cell, employee, dateKey, true);
             });
             
             row.appendChild(cell);
@@ -942,7 +1306,7 @@ function clearSelection() {
     lastSelectedCell = null;
 }
 
-function applyStatusToSelectedCells(status) {
+async function applyStatusToSelectedCells(status) {
     if (selectedCells.size === 0) return;
     
     saveState(); // Speichere den aktuellen Zustand vor der Änderung
@@ -954,7 +1318,8 @@ function applyStatusToSelectedCells(status) {
         'schulung': 'Schule',
         'feiertag': 'Feiertag',
         'kurzarbeit': 'Kurzarbeit',
-        'abgerechnet': 'Abgerechnet'
+        'abgerechnet': 'Abgerechnet',
+        'ueberstunden': 'Überstunden frei'
     }[status];
 
     const statusColors = {
@@ -964,7 +1329,8 @@ function applyStatusToSelectedCells(status) {
         'schulung': '#6f42c1',
         'feiertag': '#17a2b8',
         'kurzarbeit': '#795548',
-        'abgerechnet': '#e8f5e9'
+        'abgerechnet': '#e8f5e9',
+        'ueberstunden': '#20c997'
     };
 
     selectedCells.forEach(cell => {
@@ -984,16 +1350,55 @@ function applyStatusToSelectedCells(status) {
             delete assignments[employee][dateKey];
             cell.style.backgroundColor = '';
             cell.style.color = 'black';
+            // Entferne Haken
+            const checkmark = cell.querySelector('.checkmark');
+            if (checkmark) checkmark.remove();
+            // Stelle ursprünglichen Inhalt wieder her
+            updateCell(cell, employee, dateKey);
         } else {
-            // Setze den neuen Status
-            assignments[employee][dateKey] = {
-                text: statusText,
-                status: status
-            };
+            // Stelle sicher, dass der ursprüngliche Inhalt sichtbar ist
+            const cellText = cell.querySelector('.cell-text');
+            const originalText = cellText ? cellText.textContent.trim() : '';
             
-            cell.textContent = statusText;
-            cell.style.backgroundColor = statusColors[status];
-            cell.style.color = 'black';
+            // Für "abgerechnet": Text sichtbar lassen, nur leicht grün hinterlegen und Haken hinzufügen
+            if (status === 'abgerechnet') {
+                // Setze den neuen Status - nur wenn Text vorhanden ist, sonst leer lassen
+                assignments[employee][dateKey] = {
+                    text: originalText || '', // Leere Felder bleiben leer
+                    status: status
+                };
+                
+                // Leicht grüne Hintergrundfarbe
+                cell.style.backgroundColor = '#d4edda';
+                cell.style.color = 'black';
+                
+                // Erstelle Zelleninhalt mit Haken oben rechts
+                if (!cell.querySelector('.checkmark')) {
+                    const checkmark = document.createElement('div');
+                    checkmark.className = 'checkmark';
+                    checkmark.textContent = '✓';
+                    checkmark.style.cssText = 'position: absolute; top: 2px; right: 2px; color: #28a745; font-weight: bold; font-size: 14px; z-index: 10;';
+                    cell.style.position = 'relative';
+                    cell.appendChild(checkmark);
+                }
+                
+                // Text bleibt sichtbar (nur wenn vorhanden, sonst leer)
+                if (cellText) {
+                    cellText.textContent = originalText; // Kein statusText für leere Felder
+                }
+            } else {
+                // Für andere Status: Normal verhalten
+                // Stelle sicher, dass assignments gesetzt wird
+                if (!assignments[employee][dateKey]) {
+                    assignments[employee][dateKey] = {};
+                }
+                assignments[employee][dateKey].text = statusText;
+                assignments[employee][dateKey].status = status;
+                
+                cell.textContent = statusText;
+                cell.style.backgroundColor = statusColors[status];
+                cell.style.color = 'black';
+            }
         }
         
         if (new Date(currentDate.getFullYear(), currentDate.getMonth(), dayIndex).getDay() === 0 || 
@@ -1002,14 +1407,47 @@ function applyStatusToSelectedCells(status) {
         }
     });
     
-    saveData('assignments', assignments);
+    // Warte auf das Speichern, damit die Daten sicher gespeichert sind
+    await saveData('assignments', assignments);
+    
+    // Protokolliere Status-Änderungen
+    selectedCells.forEach(cell => {
+        const row = cell.parentElement;
+        const employee = row.querySelector('td:first-child span').textContent;
+        const dayIndex = Array.from(row.children).indexOf(cell);
+        const dateKey = `${currentDate.getFullYear()}-${currentDate.getMonth() + 1}-${dayIndex}`;
+        addToAuditLog('Status geändert', { 
+            employee: employee, 
+            date: dateKey, 
+            status: status,
+            statusText: statusText
+        });
+    });
+    
     clearSelection();
 }
 
-function showInfoField(cell, employee, dateKey) {
-    // Speichere vorherige Notiz, wenn vorhanden
+// Funktion zum Schließen des Notizfeldes
+async function closeInfoField() {
     if (currentEditingCell) {
-        saveCellNote();
+        await saveCellNote();
+        currentEditingCell = null;
+    }
+    // Schließe das Modal
+    if (infoField) {
+        infoField.style.display = 'none';
+    } else {
+        const modal = document.getElementById('infoField');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+    }
+}
+
+function showInfoField(cell, employee, dateKey, editable = true) {
+    // Schließe das vorherige Notizfeld, wenn vorhanden
+    if (currentEditingCell && currentEditingCell !== cell) {
+        closeInfoField();
     }
     
     currentEditingCell = cell;
@@ -1017,84 +1455,126 @@ function showInfoField(cell, employee, dateKey) {
     const linkKey = `${employee}-${dateKey}-link`;
     const addressKey = `${employee}-${dateKey}-address`;
     
-    // Erstelle das Info-Feld mit Link-Eingabe und Button
-    infoField.innerHTML = `
-        <h3>Notizen</h3>
-        <textarea id="infoText" placeholder="Notizen eingeben...">${cellNotes[noteKey] || ''}</textarea>
-        <div class="link-input">
-            <input type="text" id="linkInput" placeholder="Link eingeben..." value="${cellLinks[linkKey] || ''}">
-            <button id="openLinkFolder" class="open-folder-btn">Ordner öffnen</button>
-        </div>
-        <div class="address-input">
-            <input type="text" id="addressInput" placeholder="Adresse eingeben..." value="${cellAddresses[addressKey] || ''}">
-            <button id="openMaps" class="maps-btn">Adresse in Maps öffnen</button>
-        </div>
-    `;
+    // Setze die Werte in die bereits vorhandenen Felder
+    const infoText = document.getElementById('infoText');
+    const linkInput = document.getElementById('linkInput');
+    const addressInput = document.getElementById('addressInput');
     
-    // Event Listener für die Eingabefelder
-    document.getElementById('infoText').addEventListener('input', () => {
-        if (currentEditingCell) {
-            saveCellNote();
-        }
-    });
+    if (infoText) {
+        infoText.value = cellNotes[noteKey] || '';
+        infoText.disabled = !editable;
+        if (editable) infoText.readOnly = false;
+        else infoText.readOnly = true;
+    }
+    if (linkInput) {
+        linkInput.value = cellLinks[linkKey] || '';
+        linkInput.disabled = !editable;
+        if (editable) linkInput.readOnly = false;
+        else linkInput.readOnly = true;
+    }
+    if (addressInput) {
+        addressInput.value = cellAddresses[addressKey] || '';
+        addressInput.disabled = !editable;
+        if (editable) addressInput.readOnly = false;
+        else addressInput.readOnly = true;
+    }
     
-    document.getElementById('linkInput').addEventListener('input', () => {
-        if (currentEditingCell) {
-            saveCellNote();
-        }
-    });
-
-    document.getElementById('addressInput').addEventListener('input', () => {
-        if (currentEditingCell) {
-            saveCellNote();
-        }
-    });
-
-    // Event Listener für den Ordner öffnen Button
-    document.getElementById('openLinkFolder').addEventListener('click', () => {
-        const linkPath = document.getElementById('linkInput').value.trim();
-        if (linkPath) {
-            try {
-                // Prüfe, ob wir in einer Electron-Umgebung sind
-                if (window.require) {
-                    // Desktop-Version: Verwende Electron shell
-                    const { shell } = require('electron');
-                    shell.openPath(linkPath).then(() => {
-                        console.log('Ordner wurde erfolgreich geöffnet');
-                    }).catch(err => {
-                        console.error('Fehler beim Öffnen des Ordners:', err);
-                        alert('Fehler beim Öffnen des Ordners. Bitte überprüfen Sie den Pfad.');
-                    });
-                } else {
-                    // Web-Version: Zeige Pfad an und gib Anleitung
-                    alert(`In der Web-Version können Ordner nicht direkt geöffnet werden.\n\nPfad: ${linkPath}\n\nBitte kopieren Sie den Pfad und öffnen Sie ihn manuell im Windows Explorer.`);
-                }
-            } catch (error) {
-                console.error('Fehler beim Öffnen des Ordners:', error);
-                alert('Fehler beim Öffnen des Ordners. Bitte überprüfen Sie den Pfad.');
-            }
-        } else {
-            alert('Bitte geben Sie einen gültigen Ordnerpfad ein.');
-        }
-    });
-
-    // Event Listener für den Maps Button
-    document.getElementById('openMaps').addEventListener('click', () => {
-        const address = document.getElementById('addressInput').value.trim();
-        if (address) {
-            const encodedAddress = encodeURIComponent(address);
-            const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
-            window.open(mapsUrl, '_blank');
-        } else {
-            alert('Bitte geben Sie eine gültige Adresse ein.');
-        }
-    });
+    // Öffne das Modal
+    const modal = infoField || document.getElementById('infoField');
+    if (modal) {
+        modal.style.display = 'block';
+    }
     
-    document.getElementById('infoText').focus();
+    if (editable && infoText) {
+        infoText.focus();
+    }
 }
 
-function saveCellNote() {
+// Event Listener für Notizfeld (einmalig beim Laden)
+let infoFieldListenersSetup = false;
+function setupInfoFieldListeners() {
+    if (infoFieldListenersSetup) return;
+    infoFieldListenersSetup = true;
+    
+    // Event Listener für Eingabefelder (verwende Event Delegation)
+    document.addEventListener('input', (e) => {
+        if (e.target.id === 'infoText' || e.target.id === 'linkInput' || e.target.id === 'addressInput') {
+            if (currentEditingCell) {
+                saveCellNote();
+            }
+        }
+    });
+    
+    // Event Listener für Schließen-Button
+    document.addEventListener('click', (e) => {
+        if (e.target.id === 'closeInfoField') {
+            closeInfoField();
+        }
+    });
+    
+    // Event Listener für Ordner öffnen Button
+    document.addEventListener('click', (e) => {
+        if (e.target.id === 'openLinkFolder') {
+            const linkPath = document.getElementById('linkInput')?.value.trim();
+            if (linkPath) {
+                try {
+                    // Prüfe, ob wir in einer Electron-Umgebung sind
+                    if (window.require) {
+                        // Desktop-Version: Verwende Electron shell
+                        const { shell } = require('electron');
+                        shell.openPath(linkPath).then(() => {
+                            console.log('Ordner wurde erfolgreich geöffnet');
+                        }).catch(err => {
+                            console.error('Fehler beim Öffnen des Ordners:', err);
+                            alert('Fehler beim Öffnen des Ordners. Bitte überprüfen Sie den Pfad.');
+                        });
+                    } else {
+                        // Web-Version: Zeige Pfad an und gib Anleitung
+                        alert(`In der Web-Version können Ordner nicht direkt geöffnet werden.\n\nPfad: ${linkPath}\n\nBitte kopieren Sie den Pfad und öffnen Sie ihn manuell im Windows Explorer.`);
+                    }
+                } catch (error) {
+                    console.error('Fehler beim Öffnen des Ordners:', error);
+                    alert('Fehler beim Öffnen des Ordners. Bitte überprüfen Sie den Pfad.');
+                }
+            } else {
+                alert('Bitte geben Sie einen gültigen Ordnerpfad ein.');
+            }
+        }
+    });
+    
+    // Event Listener für den Maps Button
+    document.addEventListener('click', (e) => {
+        if (e.target.id === 'openMaps') {
+            const address = document.getElementById('addressInput')?.value.trim();
+            if (address) {
+                const encodedAddress = encodeURIComponent(address);
+                const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
+                window.open(mapsUrl, '_blank');
+            } else {
+                alert('Bitte geben Sie eine gültige Adresse ein.');
+            }
+        }
+    });
+    
+    // Schließe Modal beim Klick außerhalb
+    const infoFieldModal = document.getElementById('infoField');
+    if (infoFieldModal) {
+        infoFieldModal.addEventListener('click', (e) => {
+            if (e.target === infoFieldModal) {
+                closeInfoField();
+            }
+        });
+    }
+}
+
+async function saveCellNote() {
     if (!currentEditingCell) return;
+    
+    // Prüfe, ob die Eingabefelder noch aktiv sind
+    const infoText = document.getElementById('infoText');
+    if (infoText && infoText.disabled) {
+        return; // Eingabefeld ist deaktiviert, nicht speichern
+    }
     
     const row = currentEditingCell.parentElement;
     const employee = row.querySelector('td:first-child span').textContent;
@@ -1105,9 +1585,11 @@ function saveCellNote() {
     const addressKey = `${employee}-${dateKey}-address`;
     
     // Speichere Notiz, Link und Adresse
-    cellNotes[noteKey] = document.getElementById('infoText').value.trim();
-    cellLinks[linkKey] = document.getElementById('linkInput').value.trim();
-    cellAddresses[addressKey] = document.getElementById('addressInput').value.trim();
+    cellNotes[noteKey] = infoText ? infoText.value.trim() : '';
+    const linkInput = document.getElementById('linkInput');
+    const addressInput = document.getElementById('addressInput');
+    cellLinks[linkKey] = linkInput ? linkInput.value.trim() : '';
+    cellAddresses[addressKey] = addressInput ? addressInput.value.trim() : '';
     
     // Aktualisiere die Anzeige
     let displayText = cellNotes[noteKey];
@@ -1137,9 +1619,19 @@ function saveCellNote() {
         }
     }
     
-    saveData('cellNotes', cellNotes);
-    saveData('cellLinks', cellLinks);
-    saveData('cellAddresses', cellAddresses);
+    // Warte auf das Speichern, damit die Daten sicher gespeichert sind
+    await saveData('cellNotes', cellNotes);
+    await saveData('cellLinks', cellLinks);
+    await saveData('cellAddresses', cellAddresses);
+    
+    // Protokolliere Notizen-Änderungen
+    addToAuditLog('Notiz geändert', {
+        employee: employee,
+        date: dateKey,
+        note: cellNotes[noteKey] || '',
+        link: cellLinks[linkKey] || '',
+        address: cellAddresses[addressKey] || ''
+    });
 }
 
 function showDeleteEmployeeModal(employee) {
@@ -1157,27 +1649,31 @@ function confirmDeleteEmployee() {
     const endDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
     employeeEndDates[employee] = endDate.toISOString().split('T')[0];
     saveData('employeeEndDates', employeeEndDates);
+    addToAuditLog('Mitarbeiter entfernt', { employee: employee });
     hideDeleteEmployeeModal();
     updateCalendar();
 }
 
-// Event Listener für das Lösch-Modal
-document.getElementById('confirmDelete').addEventListener('click', confirmDeleteEmployee);
-document.getElementById('cancelDelete').addEventListener('click', hideDeleteEmployeeModal);
-
-// Event Listener für Klick außerhalb des Lösch-Modals
-deleteEmployeeModal.addEventListener('click', (e) => {
-    if (e.target === deleteEmployeeModal) {
-        hideDeleteEmployeeModal();
+// Funktion zum Verschieben von Mitarbeitern
+function moveEmployee(employeeName, direction) {
+    const index = employees.indexOf(employeeName);
+    if (index === -1) return;
+    
+    if (direction === 'up' && index > 0) {
+        // Verschiebe nach oben
+        [employees[index], employees[index - 1]] = [employees[index - 1], employees[index]];
+        addToAuditLog('Mitarbeiter verschoben', { employee: employeeName, direction: 'nach oben', newPosition: index - 1 });
+    } else if (direction === 'down' && index < employees.length - 1) {
+        // Verschiebe nach unten
+        [employees[index], employees[index + 1]] = [employees[index + 1], employees[index]];
+        addToAuditLog('Mitarbeiter verschoben', { employee: employeeName, direction: 'nach unten', newPosition: index + 1 });
     }
-});
+    
+    saveData('employees', employees);
+    updateCalendar();
+}
 
-// Event Listener für Escape-Taste im Lösch-Modal
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && deleteEmployeeModal.style.display === 'block') {
-        hideDeleteEmployeeModal();
-    }
-});
+// Event Listener für das Lösch-Modal werden in setupEventListeners() gesetzt
 
 function determineStatus(text) {
     const lowerText = text.toLowerCase();
@@ -1289,14 +1785,15 @@ document.getElementById('confirmExport').addEventListener('click', () => {
 });
 
 function exportJSON(range) {
+    // Verwende die globalen Variablen, die aus Firebase geladen wurden (nicht localStorage)
     const data = {
-        employees: employees,
-        assignments: assignments,
-        employeeStartDates: employeeStartDates,
-        employeeEndDates: employeeEndDates,
-        cellNotes: cellNotes,
-        cellLinks: cellLinks,
-        cellAddresses: cellAddresses
+        employees: employees || [],
+        assignments: assignments || {},
+        employeeStartDates: employeeStartDates || {},
+        employeeEndDates: employeeEndDates || {},
+        cellNotes: cellNotes || {},
+        cellLinks: cellLinks || {},
+        cellAddresses: cellAddresses || {}
     };
 
     // Wenn nur aktueller Monat exportiert werden soll
@@ -1494,10 +1991,13 @@ function createWorksheetForMonth(year, month) {
     }
 }
 
+// Backup-Daten für Undo-Funktion
+let importBackup = null;
+
 // Funktion zum Importieren der Daten
 function importData(file) {
     const reader = new FileReader();
-    reader.onload = function(e) {
+    reader.onload = async function(e) {
         try {
             const data = JSON.parse(e.target.result);
             
@@ -1514,7 +2014,28 @@ function importData(file) {
                 throw new Error(`Ungültiges Datenformat: Fehlende Felder: ${missingFields.join(', ')}`);
             }
 
-            // Speichere die Daten in Firebase
+            // Erstelle Backup der aktuellen Daten (aus Firebase/globalen Variablen)
+            importBackup = {
+                employees: JSON.parse(JSON.stringify(employees)),
+                assignments: JSON.parse(JSON.stringify(assignments)),
+                employeeStartDates: JSON.parse(JSON.stringify(employeeStartDates)),
+                employeeEndDates: JSON.parse(JSON.stringify(employeeEndDates)),
+                cellNotes: JSON.parse(JSON.stringify(cellNotes)),
+                cellLinks: JSON.parse(JSON.stringify(cellLinks)),
+                cellAddresses: JSON.parse(JSON.stringify(cellAddresses))
+            };
+            console.log('Backup erstellt vor Import');
+
+            // Speichere die neuen Daten in Firebase
+            await saveData('employees', data.employees);
+            await saveData('assignments', data.assignments);
+            await saveData('employeeStartDates', data.employeeStartDates);
+            await saveData('employeeEndDates', data.employeeEndDates);
+            await saveData('cellNotes', data.cellNotes);
+            await saveData('cellLinks', data.cellLinks);
+            await saveData('cellAddresses', data.cellAddresses);
+
+            // Aktualisiere die globalen Variablen
             employees = data.employees;
             assignments = data.assignments;
             employeeStartDates = data.employeeStartDates;
@@ -1523,23 +2044,20 @@ function importData(file) {
             cellLinks = data.cellLinks;
             cellAddresses = data.cellAddresses;
             
-            // Speichere in Firebase
-            saveData('employees', employees);
-            saveData('assignments', assignments);
-            saveData('employeeStartDates', employeeStartDates);
-            saveData('employeeEndDates', employeeEndDates);
-            saveData('cellNotes', cellNotes);
-            saveData('cellLinks', cellLinks);
-            saveData('cellAddresses', cellAddresses);
-
-            // Aktualisiere die globalen Variablen (bereits oben gesetzt)
-            
             // Aktualisiere die Anzeige
             updateCalendar();
-            alert('Daten wurden erfolgreich importiert!');
+            
+            // Zeige Undo-Option
+            const undo = confirm('Daten wurden erfolgreich importiert!\n\nMöchten Sie die Änderung rückgängig machen?');
+            if (undo) {
+                await undoImport();
+            } else {
+                importBackup = null; // Backup löschen, wenn nicht rückgängig gemacht
+            }
         } catch (error) {
             console.error('Fehler beim Importieren:', error);
             alert('Fehler beim Importieren der Daten: ' + error.message);
+            importBackup = null;
         }
     };
     reader.onerror = function() {
@@ -1548,9 +2066,54 @@ function importData(file) {
     reader.readAsText(file);
 }
 
+// Funktion zum Rückgängig machen des Imports
+async function undoImport() {
+    if (!importBackup) {
+        alert('Kein Backup verfügbar. Rückgängig machen nicht möglich.');
+        return;
+    }
+    
+    try {
+        // Stelle die Backup-Daten wieder her
+        await saveData('employees', importBackup.employees);
+        await saveData('assignments', importBackup.assignments);
+        await saveData('employeeStartDates', importBackup.employeeStartDates);
+        await saveData('employeeEndDates', importBackup.employeeEndDates);
+        await saveData('cellNotes', importBackup.cellNotes);
+        await saveData('cellLinks', importBackup.cellLinks);
+        await saveData('cellAddresses', importBackup.cellAddresses);
+
+        // Aktualisiere die globalen Variablen
+        employees = importBackup.employees;
+        assignments = importBackup.assignments;
+        employeeStartDates = importBackup.employeeStartDates;
+        employeeEndDates = importBackup.employeeEndDates;
+        cellNotes = importBackup.cellNotes;
+        cellLinks = importBackup.cellLinks;
+        cellAddresses = importBackup.cellAddresses;
+        
+        // Aktualisiere die Anzeige
+        updateCalendar();
+        
+        // Protokolliere die Aktion
+        addToAuditLog('Import rückgängig gemacht', {});
+        
+        alert('Import wurde erfolgreich rückgängig gemacht!');
+        importBackup = null;
+    } catch (error) {
+        console.error('Fehler beim Rückgängig machen:', error);
+        alert('Fehler beim Rückgängig machen: ' + error.message);
+    }
+}
+
 // Event Listener für Import
 document.getElementById('importDataBtn').addEventListener('click', () => {
     document.getElementById('importData').click();
+});
+
+// Event Listener für Protokoll
+document.getElementById('showAuditLog').addEventListener('click', () => {
+    showAuditLog();
 });
 
 document.getElementById('importData').addEventListener('change', (e) => {
@@ -1558,6 +2121,71 @@ document.getElementById('importData').addEventListener('change', (e) => {
         importData(e.target.files[0]);
     }
 });
+
+// Funktion zum Erstrecken von Text über mehrere Zellen
+function extendTextOverCells(cell, employee, dateKey) {
+    if (!cell || !cell.parentElement) {
+        console.warn('extendTextOverCells: Zelle oder parentElement ist null');
+        return;
+    }
+    const row = cell.parentElement;
+    if (!row || !row.children) {
+        console.warn('extendTextOverCells: row oder row.children ist null');
+        return;
+    }
+    const dayIndex = Array.from(row.children).indexOf(cell);
+    if (dayIndex === -1) {
+        console.warn('extendTextOverCells: Zelle nicht in row.children gefunden');
+        return;
+    }
+    
+    const cellText = cell.querySelector('.cell-text');
+    if (!cellText || !cellText.textContent || !cellText.textContent.trim()) {
+        // Wenn kein Text, entferne colspan
+        cell.removeAttribute('colspan');
+        cell.style.width = '';
+        return;
+    }
+    
+    // Prüfe, ob die nächste Zelle leer ist
+    let spanCount = 1;
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth() + 1;
+    
+    // Erstrecke über leere Zellen nach rechts
+    if (!row.children || row.children.length === 0) {
+        console.warn('extendTextOverCells: row.children ist leer');
+        return;
+    }
+    
+    for (let i = dayIndex + 1; i < row.children.length; i++) {
+        const nextCell = row.children[i];
+        if (!nextCell || nextCell === row.children[0]) break;
+        
+        const nextDay = i; // Tag-Index
+        const nextDateKey = `${year}-${month}-${nextDay}`;
+        const nextNoteKey = `${employee}-${nextDateKey}`;
+        const nextAssignment = assignments[employee]?.[nextDateKey];
+        
+        // Wenn die nächste Zelle leer ist (keine Notiz, keine Zuweisung, keine Links/Adressen)
+        if (!cellNotes[nextNoteKey] && !nextAssignment && 
+            !cellLinks[`${employee}-${nextDateKey}-link`] && 
+            !cellAddresses[`${employee}-${nextDateKey}-address`]) {
+            spanCount++;
+        } else {
+            break;
+        }
+    }
+    
+    // Setze colspan, wenn mehr als eine Zelle
+    if (spanCount > 1) {
+        cell.setAttribute('colspan', spanCount);
+        cell.style.position = 'relative';
+        cell.style.zIndex = '1';
+    } else {
+        cell.removeAttribute('colspan');
+    }
+}
 
 function updateCell(cell, employee, dateKey) {
     const assignment = assignments[employee]?.[dateKey];
@@ -1573,22 +2201,62 @@ function updateCell(cell, employee, dateKey) {
             'schulung': '#6f42c1',
             'feiertag': '#17a2b8',
             'kurzarbeit': '#795548',
-            'abgerechnet': '#e8f5e9'
+            'abgerechnet': '#e8f5e9',
+            'ueberstunden': '#20c997'
         };
 
-        // Setze die Hintergrundfarbe
-        cell.style.backgroundColor = statusColors[assignment.status];
-        
-        // Setze die Textfarbe immer auf schwarz
-        cell.style.color = 'black';
-        
-        // Setze den Text nur, wenn es kein "Abgerechnet" Status ist und keine Notiz vorhanden ist
-        if (assignment.status !== 'abgerechnet' && !cellNotes[noteKey]) {
+        // Für "abgerechnet": Leicht grün hinterlegen, Text sichtbar lassen, Haken hinzufügen
+        if (assignment.status === 'abgerechnet') {
+            cell.style.backgroundColor = '#d4edda';
+            cell.style.color = 'black';
+            cell.style.position = 'relative';
+            
+            // Stelle sicher, dass der Text sichtbar ist (nur wenn vorhanden)
             const cellText = cell.querySelector('.cell-text');
+            const textToShow = assignment.text ? assignment.text.trim() : '';
+            
             if (cellText) {
-                cellText.textContent = assignment.text;
-            } else {
-                cell.textContent = assignment.text;
+                cellText.textContent = textToShow; // Leere Felder bleiben leer
+            } else if (textToShow) {
+                // Erstelle cell-text nur wenn Text vorhanden ist
+                const textDiv = document.createElement('div');
+                textDiv.className = 'cell-text';
+                textDiv.textContent = textToShow;
+                if (cell.querySelector('.cell-content')) {
+                    cell.querySelector('.cell-content').appendChild(textDiv);
+                } else {
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'cell-content';
+                    contentDiv.appendChild(textDiv);
+                    cell.appendChild(contentDiv);
+                }
+            }
+            
+            // Füge Haken hinzu, falls nicht vorhanden
+            if (!cell.querySelector('.checkmark')) {
+                const checkmark = document.createElement('div');
+                checkmark.className = 'checkmark';
+                checkmark.textContent = '✓';
+                checkmark.style.cssText = 'position: absolute; top: 2px; right: 2px; color: #28a745; font-weight: bold; font-size: 14px; z-index: 10;';
+                cell.appendChild(checkmark);
+            }
+        } else {
+            // Für andere Status: Normal verhalten
+            cell.style.backgroundColor = statusColors[assignment.status];
+            cell.style.color = 'black';
+            
+            // Entferne Haken falls vorhanden
+            const checkmark = cell.querySelector('.checkmark');
+            if (checkmark) checkmark.remove();
+            
+            // Setze den Text nur, wenn keine Notiz vorhanden ist
+            if (!cellNotes[noteKey]) {
+                const cellText = cell.querySelector('.cell-text');
+                if (cellText) {
+                    cellText.textContent = assignment.text;
+                } else {
+                    cell.textContent = assignment.text;
+                }
             }
         }
     } else {
@@ -1612,6 +2280,12 @@ function updateCell(cell, employee, dateKey) {
             cellText.textContent = cellNotes[noteKey];
         }
         cell.setAttribute('data-info', cellNotes[noteKey]);
+    }
+    
+    // Erstrecke Text über mehrere Zellen, wenn möglich
+    // Prüfe, ob die Zelle noch im DOM ist
+    if (cell && cell.parentElement && cell.parentElement.children) {
+        extendTextOverCells(cell, employee, dateKey);
     }
 }
 
@@ -1677,11 +2351,17 @@ function setupMobileWeekView() {
     
     // Füge nur aktive Mitarbeiter hinzu
     employees.forEach(employee => {
-        const startDate = new Date(employeeStartDates[employee] || '2000-01-01');
-        const endDate = employeeEndDates[employee] ? new Date(employeeEndDates[employee]) : new Date('2100-12-31');
-        const currentMonthDate = new Date(currentDate);
+        // Wenn keine Start-/Enddaten vorhanden sind, zeige den Mitarbeiter immer an
+        let shouldShow = true;
         
-        if (isDateInRange(currentMonthDate, startDate, endDate)) {
+        if (employeeStartDates[employee] || employeeEndDates[employee]) {
+            const startDate = new Date(employeeStartDates[employee] || '2000-01-01');
+            const endDate = employeeEndDates[employee] ? new Date(employeeEndDates[employee]) : new Date('2100-12-31');
+            const currentMonthDate = new Date(currentDate);
+            shouldShow = isDateInRange(currentMonthDate, startDate, endDate);
+        }
+        
+        if (shouldShow) {
             const row = document.createElement('tr');
             const nameCell = document.createElement('td');
             
@@ -1691,6 +2371,29 @@ function setupMobileWeekView() {
             const nameSpan = document.createElement('span');
             nameSpan.textContent = employee;
             nameContainer.appendChild(nameSpan);
+            
+            // Verschiebe-Buttons
+            const moveUpButton = document.createElement('button');
+            moveUpButton.className = 'move-employee';
+            moveUpButton.textContent = '↑';
+            moveUpButton.title = 'Nach oben verschieben';
+            moveUpButton.style.cssText = 'margin: 0 2px; padding: 2px 6px; font-size: 12px;';
+            moveUpButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                moveEmployee(employee, 'up');
+            });
+            nameContainer.appendChild(moveUpButton);
+            
+            const moveDownButton = document.createElement('button');
+            moveDownButton.className = 'move-employee';
+            moveDownButton.textContent = '↓';
+            moveDownButton.title = 'Nach unten verschieben';
+            moveDownButton.style.cssText = 'margin: 0 2px; padding: 2px 6px; font-size: 12px;';
+            moveDownButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                moveEmployee(employee, 'down');
+            });
+            nameContainer.appendChild(moveDownButton);
             
             const deleteButton = document.createElement('button');
             deleteButton.className = 'delete-employee';
@@ -1719,23 +2422,49 @@ function setupMobileWeekView() {
     showCurrentWeek();
 }
 
-// Füge den neuen Abgerechnet-Button hinzu
+// Füge den "Überstunden frei" Button hinzu (vor Abgerechnet)
 const statusButtons = document.querySelector('.status-buttons');
+const ueberstundenButton = document.createElement('button');
+ueberstundenButton.className = 'status-button';
+ueberstundenButton.dataset.status = 'ueberstunden';
+ueberstundenButton.textContent = 'Überstunden frei';
+ueberstundenButton.style.backgroundColor = '#20c997';
+ueberstundenButton.style.color = 'white';
+
+// Füge den Abgerechnet-Button hinzu (nach Überstunden frei)
 const abgerechnetButton = document.createElement('button');
 abgerechnetButton.className = 'status-button';
 abgerechnetButton.dataset.status = 'abgerechnet';
 abgerechnetButton.textContent = 'Abgerechnet';
 abgerechnetButton.style.backgroundColor = '#e8f5e9';
 abgerechnetButton.style.color = 'black';
-statusButtons.appendChild(abgerechnetButton);
 
-// Event Listener für den neuen Button
-abgerechnetButton.addEventListener('click', () => {
-    applyStatusToSelectedCells('abgerechnet');
+// Hole den "Auswahl löschen" Button
+const clearSelectionButton = document.getElementById('clearSelection');
+
+// Füge Buttons in der richtigen Reihenfolge ein
+if (clearSelectionButton) {
+    // Füge vor "Auswahl löschen" ein
+    statusButtons.insertBefore(ueberstundenButton, clearSelectionButton);
+    statusButtons.insertBefore(abgerechnetButton, clearSelectionButton);
+} else {
+    // Falls "Auswahl löschen" nicht gefunden, füge am Ende hinzu
+    statusButtons.appendChild(ueberstundenButton);
+    statusButtons.appendChild(abgerechnetButton);
+}
+
+// Event Listener für den Überstunden-Button
+ueberstundenButton.addEventListener('click', async () => {
+    await applyStatusToSelectedCells('ueberstunden');
+});
+
+// Event Listener für den Abgerechnet-Button
+abgerechnetButton.addEventListener('click', async () => {
+    await applyStatusToSelectedCells('abgerechnet');
 });
 
 // Event Listener für den "Auswahl löschen" Button
-document.getElementById('clearSelection').addEventListener('click', () => {
+document.getElementById('clearSelection').addEventListener('click', async () => {
     if (selectedCells.size > 0) {
         saveState(); // Speichere den aktuellen Zustand vor dem Löschen
         
@@ -1769,11 +2498,11 @@ document.getElementById('clearSelection').addEventListener('click', () => {
             }
         });
         
-        // Speichere die Änderungen im localStorage
-        saveData('assignments', assignments);
-        saveData('cellNotes', cellNotes);
-        saveData('cellLinks', cellLinks);
-        saveData('cellAddresses', cellAddresses);
+        // Speichere die Änderungen in Firebase
+        await saveData('assignments', assignments);
+        await saveData('cellNotes', cellNotes);
+        await saveData('cellLinks', cellLinks);
+        await saveData('cellAddresses', cellAddresses);
         
         // Lösche die Auswahl
         clearSelection();

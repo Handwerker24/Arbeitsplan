@@ -7,16 +7,29 @@
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
-    <!-- Firebase SDK v8 (kompatibel mit normalen Script-Tags) -->
+    <!-- Firebase SDK v8 -->
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
-    <script src="firebase-simple.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
     <script>
         // Überprüfe, ob der Benutzer eingeloggt ist
         window.onload = function() {
             const currentUser = JSON.parse(localStorage.getItem('currentUser'));
             if (!currentUser) {
                 window.location.href = 'login.html';
+            } else {
+                // Stelle sicher, dass Firebase Auth aktiv ist (für Security Rules)
+                if (typeof firebase !== 'undefined' && firebase.auth) {
+                    // Prüfe, ob bereits authentifiziert
+                    firebase.auth().onAuthStateChanged(function(authUser) {
+                        if (!authUser) {
+                            // Versuche anonyme Authentifizierung für Security Rules
+                            firebase.auth().signInAnonymously().catch(function(error) {
+                                console.warn('Anonyme Authentifizierung fehlgeschlagen:', error);
+                            });
+                        }
+                    });
+                }
             }
         }
     </script>
@@ -43,16 +56,20 @@
             <button id="clearSelection">Auswahl löschen</button>
         </div>
 
-        <div id="infoField" class="info-field">
-            <h3>Notizen</h3>
-            <textarea id="infoText" placeholder="Notizen eingeben..."></textarea>
-            <div class="link-input">
-                <input type="text" id="linkInput" placeholder="Link eingeben...">
-                <button id="openLinkFolder" class="open-folder-btn">Ordner öffnen</button>
-            </div>
-            <div class="address-input">
-                <input type="text" id="addressInput" placeholder="Adresse eingeben...">
-                <button id="openMaps" class="maps-btn">Adresse in Maps öffnen</button>
+        <!-- Modal für Notizen (Popup) -->
+        <div id="infoField" class="modal" style="display: none;">
+            <div class="modal-content">
+                <button id="closeInfoField" class="close-button-x">×</button>
+                <h3>Notizen</h3>
+                <textarea id="infoText" placeholder="Notizen eingeben..."></textarea>
+                <div class="link-input">
+                    <input type="text" id="linkInput" placeholder="Link eingeben...">
+                    <button id="openLinkFolder" class="open-folder-btn">Ordner öffnen</button>
+                </div>
+                <div class="address-input">
+                    <input type="text" id="addressInput" placeholder="Adresse eingeben...">
+                    <button id="openMaps" class="maps-btn">Adresse in Maps öffnen</button>
+                </div>
             </div>
         </div>
 
@@ -70,6 +87,7 @@
             <button id="exportData">Daten exportieren</button>
             <input type="file" id="importData" accept=".json" style="display: none;">
             <button id="importDataBtn">Daten importieren</button>
+            <button id="showAuditLog">Änderungsprotokoll</button>
         </div>
     </div>
 
@@ -132,6 +150,7 @@
         </div>
     </div>
 
+    <script src="firebase-simple.js"></script>
     <script src="script.js"></script>
 </body>
-</html>
+</html> 

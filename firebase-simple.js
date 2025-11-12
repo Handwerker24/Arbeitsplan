@@ -1,239 +1,141 @@
-// Firebase Database Helper Functions
+// Firebase-Konfiguration (nur einmal deklarieren)
+if (typeof firebaseConfig === 'undefined') {
+    var firebaseConfig = {
+        apiKey: "AIzaSyBhxf0A_Ks-QNWyn9BC_aFIpa-FNiRnL3E",
+        authDomain: "arbeitsplan-f8b81.firebaseapp.com",
+        databaseURL: "https://arbeitsplan-f8b81-default-rtdb.europe-west1.firebasedatabase.app",
+        projectId: "arbeitsplan-f8b81",
+        storageBucket: "arbeitsplan-f8b81.firebasestorage.app",
+        messagingSenderId: "245771353059",
+        appId: "1:245771353059:web:e8b61cac54ff600c5dbed6"
+    };
+}
+
+// Firebase initialisieren (nur einmal)
+let firebaseApp, database, auth;
+try {
+    if (typeof firebase !== 'undefined') {
+        // Prüfe, ob Firebase bereits initialisiert wurde
+        try {
+            firebaseApp = firebase.app();
+            console.log('Firebase bereits initialisiert');
+        } catch (e) {
+            // Firebase noch nicht initialisiert, initialisiere es
+            firebaseApp = firebase.initializeApp(firebaseConfig);
+            console.log('Firebase erfolgreich initialisiert');
+        }
+        database = firebase.database();
+        auth = firebase.auth();
+    } else {
+        console.error('Firebase SDK nicht geladen');
+    }
+} catch (error) {
+    console.error('Fehler bei Firebase-Initialisierung:', error);
+}
+
+// FirebaseDB Klasse
 class FirebaseDB {
     constructor() {
-        this.db = null;
-        this.initialized = false;
+        this.db = database;
     }
 
-    // Initialisiere Firebase
-    init() {
-        if (typeof firebase !== 'undefined' && !this.initialized) {
-            try {
-                const firebaseConfig = {
-                    apiKey: "AIzaSyBhxf0A_Ks-QNWyn9BC_aFIpa-FNiRnL3E",
-                    authDomain: "arbeitsplan-f8b81.firebaseapp.com",
-                    databaseURL: "https://arbeitsplan-f8b81-default-rtdb.europe-west1.firebasedatabase.app",
-                    projectId: "arbeitsplan-f8b81",
-                    storageBucket: "arbeitsplan-f8b81.firebasestorage.app",
-                    messagingSenderId: "245771353059",
-                    appId: "1:245771353059:web:e8b61cac54ff600c5dbed6"
-                };
-
-                const app = firebase.initializeApp(firebaseConfig);
-                this.db = firebase.database();
-                this.initialized = true;
-                console.log('Firebase erfolgreich initialisiert');
-                return true;
-            } catch (error) {
-                console.error('Fehler bei Firebase-Initialisierung:', error);
-                return false;
-            }
-        }
-        return this.initialized;
-    }
-
-    // Speichere Daten in Firebase
-    async saveData(path, data) {
-        if (!this.init()) {
-            throw new Error('Firebase nicht verfügbar');
+    // Daten aus Firebase laden
+    async loadData(key) {
+        if (!this.db) {
+            console.warn('Firebase nicht verfügbar, verwende localStorage');
+            const data = localStorage.getItem(key);
+            return data ? JSON.parse(data) : null;
         }
 
         try {
-            await this.db.ref(path).set(data);
-            console.log('Daten erfolgreich gespeichert:', path);
-            return true;
-        } catch (error) {
-            console.error('Fehler beim Speichern:', error);
-            // Temporärer Fallback zu localStorage bei Berechtigungsfehlern
-            if (error.code === 'PERMISSION_DENIED') {
-                console.log('Firebase-Berechtigung verweigert, verwende localStorage als Fallback');
-                localStorage.setItem(path, JSON.stringify(data));
-                return true;
-            }
-            throw error;
-        }
-    }
-
-    // Lade Daten aus Firebase
-    async loadData(path) {
-        if (!this.init()) {
-            throw new Error('Firebase nicht verfügbar');
-        }
-
-        try {
-            const snapshot = await this.db.ref(path).once('value');
-            if (snapshot.exists()) {
-                return snapshot.val();
-            } else {
-                console.log('Keine Daten gefunden für:', path);
+            const snapshot = await this.db.ref(key).once('value');
+            const data = snapshot.val();
+            if (data === null) {
+                console.log(`Keine Daten gefunden für: ${key}`);
                 return null;
             }
+            return data;
         } catch (error) {
-            console.error('Fehler beim Laden:', error);
-            // Temporärer Fallback zu localStorage bei Berechtigungsfehlern
-            if (error.code === 'PERMISSION_DENIED') {
-                console.log('Firebase-Berechtigung verweigert, verwende localStorage als Fallback');
-                const data = localStorage.getItem(path);
-                return data ? JSON.parse(data) : null;
-            }
-            throw error;
+            console.error(`Fehler beim Laden: ${error.message}`);
+            // Fallback zu localStorage
+            const data = localStorage.getItem(key);
+            return data ? JSON.parse(data) : null;
         }
     }
 
-    // Lösche Daten aus Firebase
-    async deleteData(path) {
-        if (!this.init()) {
-            throw new Error('Firebase nicht verfügbar');
+    // Daten in Firebase speichern
+    async saveData(key, data) {
+        if (!this.db) {
+            console.warn('Firebase nicht verfügbar, verwende localStorage');
+            localStorage.setItem(key, JSON.stringify(data));
+            return;
         }
 
         try {
-            await this.db.ref(path).remove();
-            console.log('Daten erfolgreich gelöscht:', path);
-            return true;
+            await this.db.ref(key).set(data);
+            console.log(`Daten gespeichert für: ${key}`);
         } catch (error) {
-            console.error('Fehler beim Löschen:', error);
-            // Temporärer Fallback zu localStorage bei Berechtigungsfehlern
-            if (error.code === 'PERMISSION_DENIED') {
-                console.log('Firebase-Berechtigung verweigert, verwende localStorage als Fallback');
-                localStorage.removeItem(path);
-                return true;
-            }
-            throw error;
+            console.error(`Fehler beim Speichern: ${error.message}`);
+            // Fallback zu localStorage
+            localStorage.setItem(key, JSON.stringify(data));
         }
     }
 
-    // Speichere Mitarbeiter
-    async saveEmployees(employees) {
-        return await this.saveData('employees', employees);
-    }
-
-    // Lade Mitarbeiter
-    async loadEmployees() {
-        const data = await this.loadData('employees');
-        return data || [];
-    }
-
-    // Speichere Zuweisungen
-    async saveAssignments(assignments) {
-        return await this.saveData('assignments', assignments);
-    }
-
-    // Lade Zuweisungen
-    async loadAssignments() {
-        const data = await this.loadData('assignments');
-        return data || {};
-    }
-
-    // Speichere Mitarbeiter Startdaten
-    async saveEmployeeStartDates(dates) {
-        return await this.saveData('employeeStartDates', dates);
-    }
-
-    // Lade Mitarbeiter Startdaten
-    async loadEmployeeStartDates() {
-        const data = await this.loadData('employeeStartDates');
-        return data || {};
-    }
-
-    // Speichere Mitarbeiter Enddaten
-    async saveEmployeeEndDates(dates) {
-        return await this.saveData('employeeEndDates', dates);
-    }
-
-    // Lade Mitarbeiter Enddaten
-    async loadEmployeeEndDates() {
-        const data = await this.loadData('employeeEndDates');
-        return data || {};
-    }
-
-    // Speichere Zell-Notizen
-    async saveCellNotes(notes) {
-        return await this.saveData('cellNotes', notes);
-    }
-
-    // Lade Zell-Notizen
-    async loadCellNotes() {
-        const data = await this.loadData('cellNotes');
-        return data || {};
-    }
-
-    // Speichere Zell-Links
-    async saveCellLinks(links) {
-        return await this.saveData('cellLinks', links);
-    }
-
-    // Lade Zell-Links
-    async loadCellLinks() {
-        const data = await this.loadData('cellLinks');
-        return data || {};
-    }
-
-    // Speichere Zell-Adressen
-    async saveCellAddresses(addresses) {
-        return await this.saveData('cellAddresses', addresses);
-    }
-
-    // Lade Zell-Adressen
-    async loadCellAddresses() {
-        const data = await this.loadData('cellAddresses');
-        return data || {};
-    }
-
-    // Lade alle Daten
+    // Alle Daten laden
     async loadAllData() {
-        try {
-            const [employees, assignments, employeeStartDates, employeeEndDates, cellNotes, cellLinks, cellAddresses] = await Promise.all([
-                this.loadEmployees(),
-                this.loadAssignments(),
-                this.loadEmployeeStartDates(),
-                this.loadEmployeeEndDates(),
-                this.loadCellNotes(),
-                this.loadCellLinks(),
-                this.loadCellAddresses()
-            ]);
-
-            return {
-                employees,
-                assignments,
-                employeeStartDates,
-                employeeEndDates,
-                cellNotes,
-                cellLinks,
-                cellAddresses
-            };
-        } catch (error) {
-            console.error('Fehler beim Laden aller Daten:', error);
-            return {
-                employees: [],
-                assignments: {},
-                employeeStartDates: {},
-                employeeEndDates: {},
-                cellNotes: {},
-                cellLinks: {},
-                cellAddresses: {}
-            };
-        }
+        const data = {
+            employees: await this.loadData('employees') || [],
+            assignments: await this.loadData('assignments') || {},
+            employeeStartDates: await this.loadData('employeeStartDates') || {},
+            employeeEndDates: await this.loadData('employeeEndDates') || {},
+            cellNotes: await this.loadData('cellNotes') || {},
+            cellLinks: await this.loadData('cellLinks') || {},
+            cellAddresses: await this.loadData('cellAddresses') || {}
+        };
+        return data;
     }
 
-    // Speichere alle Daten
-    async saveAllData(data) {
-        try {
-            await Promise.all([
-                this.saveEmployees(data.employees),
-                this.saveAssignments(data.assignments),
-                this.saveEmployeeStartDates(data.employeeStartDates),
-                this.saveEmployeeEndDates(data.employeeEndDates),
-                this.saveCellNotes(data.cellNotes),
-                this.saveCellLinks(data.cellLinks),
-                this.saveCellAddresses(data.cellAddresses)
-            ]);
-            return true;
-        } catch (error) {
-            console.error('Fehler beim Speichern aller Daten:', error);
-            return false;
-        }
+    // Benutzer aus Firebase laden
+    async loadUsers() {
+        return await this.loadData('users') || {};
+    }
+
+    // Benutzer in Firebase speichern
+    async saveUsers(users) {
+        await this.saveData('users', users);
     }
 }
 
-// Erstelle eine globale Instanz
-window.firebaseDB = new FirebaseDB();
+// Globale Instanz erstellen
+let firebaseDB = null;
+
+// Warte bis DOM bereit ist, dann initialisiere
+function initFirebaseDB() {
+    if (database) {
+        firebaseDB = new FirebaseDB();
+        window.firebaseDB = firebaseDB;
+        console.log('FirebaseDB Instanz erstellt und in window.firebaseDB gespeichert');
+    } else {
+        console.warn('FirebaseDB konnte nicht initialisiert werden - database ist null');
+    }
+}
+
+// Initialisiere sofort, wenn möglich
+if (typeof firebase !== 'undefined' && database) {
+    initFirebaseDB();
+} else {
+    // Warte bis alles geladen ist
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initFirebaseDB);
+    } else {
+        // DOM ist bereits bereit, warte kurz auf Firebase
+        setTimeout(() => {
+            if (typeof firebase !== 'undefined' && database) {
+                initFirebaseDB();
+            } else {
+                console.warn('Firebase oder database nicht verfügbar nach Timeout');
+            }
+        }, 100);
+    }
+}
+
