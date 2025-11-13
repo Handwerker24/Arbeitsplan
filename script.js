@@ -445,8 +445,9 @@ document.addEventListener('keydown', async (e) => {
         selectedCells.forEach(cell => {
             const row = cell.parentElement;
             const employee = row.querySelector('td:first-child span').textContent;
-            const dayIndex = Array.from(row.children).indexOf(cell);
-            const dateKey = `${currentDate.getFullYear()}-${currentDate.getMonth() + 1}-${dayIndex}`;
+            const dateKey = getDateKeyFromCell(cell);
+            if (!dateKey) return;
+            
             const noteKey = `${employee}-${dateKey}`;
             const linkKey = `${employee}-${dateKey}-link`;
             
@@ -463,8 +464,11 @@ document.addEventListener('keydown', async (e) => {
             // Setze Zelleninhalt zurück
             cell.innerHTML = '<div class="cell-content"><div class="cell-text"></div></div>';
             cell.className = 'calendar-cell';
-            if (new Date(currentDate.getFullYear(), currentDate.getMonth(), dayIndex).getDay() === 0 || 
-                new Date(currentDate.getFullYear(), currentDate.getMonth(), dayIndex).getDay() === 6) {
+            
+            // Prüfe Wochenende basierend auf dem tatsächlichen Datum
+            const [year, month, day] = dateKey.split('-').map(Number);
+            const date = new Date(year, month - 1, day);
+            if (date.getDay() === 0 || date.getDay() === 6) {
                 cell.classList.add('weekend-cell');
             }
         });
@@ -479,8 +483,9 @@ document.addEventListener('keydown', async (e) => {
         const firstCell = Array.from(selectedCells)[0];
         const row = firstCell.parentElement;
         const employee = row.querySelector('td:first-child span').textContent;
-        const dayIndex = Array.from(row.children).indexOf(firstCell);
-        const dateKey = `${currentDate.getFullYear()}-${currentDate.getMonth() + 1}-${dayIndex}`;
+        const dateKey = getDateKeyFromCell(firstCell);
+        if (!dateKey) return;
+        
         const noteKey = `${employee}-${dateKey}`;
         const linkKey = `${employee}-${dateKey}-link`;
         const addressKey = `${employee}-${dateKey}-address`;
@@ -500,8 +505,9 @@ document.addEventListener('keydown', async (e) => {
         selectedCells.forEach(cell => {
             const row = cell.parentElement;
             const employee = row.querySelector('td:first-child span').textContent;
-            const dayIndex = Array.from(row.children).indexOf(cell);
-            const dateKey = `${currentDate.getFullYear()}-${currentDate.getMonth() + 1}-${dayIndex}`;
+            const dateKey = getDateKeyFromCell(cell);
+            if (!dateKey) return;
+            
             const noteKey = `${employee}-${dateKey}`;
             const linkKey = `${employee}-${dateKey}-link`;
             const addressKey = `${employee}-${dateKey}-address`;
@@ -571,8 +577,9 @@ document.addEventListener('keydown', async (e) => {
             }
             
             // Füge weekend-cell Klasse hinzu, wenn nötig
-            if (new Date(currentDate.getFullYear(), currentDate.getMonth(), dayIndex).getDay() === 0 || 
-                new Date(currentDate.getFullYear(), currentDate.getMonth(), dayIndex).getDay() === 6) {
+            const [year, month, day] = dateKey.split('-').map(Number);
+            const date = new Date(year, month - 1, day);
+            if (date.getDay() === 0 || date.getDay() === 6) {
                 cell.classList.add('weekend-cell');
             }
         });
@@ -1230,6 +1237,42 @@ function getCurrentWeek() {
     return monday;
 }
 
+// Hilfsfunktion zum Ermitteln des dateKey aus einer Zelle
+// Berücksichtigt sowohl Monats- als auch Wochenansicht
+function getDateKeyFromCell(cell) {
+    if (!cell || !cell.parentElement) return null;
+    
+    const row = cell.parentElement;
+    const dayIndex = Array.from(row.children).indexOf(cell);
+    
+    if (dayIndex <= 0) return null; // Index 0 ist der Mitarbeitername
+    
+    const calendar = row.closest('.calendar');
+    if (!calendar) return null;
+    
+    const headerRow = calendar.querySelector('thead tr');
+    if (!headerRow) return null;
+    
+    const headerCells = headerRow.querySelectorAll('th');
+    if (dayIndex >= headerCells.length) return null;
+    
+    const headerCell = headerCells[dayIndex];
+    if (!headerCell) return null;
+    
+    // Prüfe, ob es eine Wochenansicht ist (hat weekday-header)
+    const weekdayHeader = headerCell.querySelector('.weekday-header');
+    if (weekdayHeader) {
+        // Wochenansicht: Berechne Datum aus Montag + Tag-Offset
+        const monday = getCurrentWeek();
+        const cellDate = new Date(monday);
+        cellDate.setDate(monday.getDate() + (dayIndex - 1)); // -1 weil Index 0 = Mitarbeitername
+        return `${cellDate.getFullYear()}-${cellDate.getMonth() + 1}-${cellDate.getDate()}`;
+    } else {
+        // Monatsansicht: dayIndex entspricht direkt dem Tag
+        return `${currentDate.getFullYear()}-${currentDate.getMonth() + 1}-${dayIndex}`;
+    }
+}
+
 function updateCurrentWeekDisplay(element) {
     const monday = getCurrentWeek();
     const sunday = new Date(monday);
@@ -1336,8 +1379,8 @@ async function applyStatusToSelectedCells(status) {
     selectedCells.forEach(cell => {
         const row = cell.parentElement;
         const employee = row.querySelector('td:first-child span').textContent;
-        const dayIndex = Array.from(row.children).indexOf(cell);
-        const dateKey = `${currentDate.getFullYear()}-${currentDate.getMonth() + 1}-${dayIndex}`;
+        const dateKey = getDateKeyFromCell(cell);
+        if (!dateKey) return;
         
         if (!assignments[employee]) {
             assignments[employee] = {};
@@ -1401,8 +1444,10 @@ async function applyStatusToSelectedCells(status) {
             }
         }
         
-        if (new Date(currentDate.getFullYear(), currentDate.getMonth(), dayIndex).getDay() === 0 || 
-            new Date(currentDate.getFullYear(), currentDate.getMonth(), dayIndex).getDay() === 6) {
+        // Prüfe Wochenende basierend auf dem tatsächlichen Datum
+        const [year, month, day] = dateKey.split('-').map(Number);
+        const date = new Date(year, month - 1, day);
+        if (date.getDay() === 0 || date.getDay() === 6) {
             cell.classList.add('weekend-cell');
         }
     });
@@ -1414,8 +1459,9 @@ async function applyStatusToSelectedCells(status) {
     selectedCells.forEach(cell => {
         const row = cell.parentElement;
         const employee = row.querySelector('td:first-child span').textContent;
-        const dayIndex = Array.from(row.children).indexOf(cell);
-        const dateKey = `${currentDate.getFullYear()}-${currentDate.getMonth() + 1}-${dayIndex}`;
+        const dateKey = getDateKeyFromCell(cell);
+        if (!dateKey) return;
+        
         addToAuditLog('Status geändert', { 
             employee: employee, 
             date: dateKey, 
@@ -1578,8 +1624,9 @@ async function saveCellNote() {
     
     const row = currentEditingCell.parentElement;
     const employee = row.querySelector('td:first-child span').textContent;
-    const dayIndex = Array.from(row.children).indexOf(currentEditingCell);
-    const dateKey = `${currentDate.getFullYear()}-${currentDate.getMonth() + 1}-${dayIndex}`;
+    const dateKey = getDateKeyFromCell(currentEditingCell);
+    if (!dateKey) return;
+    
     const noteKey = `${employee}-${dateKey}`;
     const linkKey = `${employee}-${dateKey}-link`;
     const addressKey = `${employee}-${dateKey}-address`;
@@ -2471,8 +2518,9 @@ document.getElementById('clearSelection').addEventListener('click', async () => 
         selectedCells.forEach(cell => {
             const row = cell.parentElement;
             const employee = row.querySelector('td:first-child span').textContent;
-            const dayIndex = Array.from(row.children).indexOf(cell);
-            const dateKey = `${currentDate.getFullYear()}-${currentDate.getMonth() + 1}-${dayIndex}`;
+            const dateKey = getDateKeyFromCell(cell);
+            if (!dateKey) return;
+            
             const noteKey = `${employee}-${dateKey}`;
             const linkKey = `${employee}-${dateKey}-link`;
             const addressKey = `${employee}-${dateKey}-address`;
@@ -2492,8 +2540,10 @@ document.getElementById('clearSelection').addEventListener('click', async () => 
             cell.removeAttribute('data-info');
             cell.className = 'calendar-cell';
             
-            if (new Date(currentDate.getFullYear(), currentDate.getMonth(), dayIndex).getDay() === 0 || 
-                new Date(currentDate.getFullYear(), currentDate.getMonth(), dayIndex).getDay() === 6) {
+            // Prüfe Wochenende basierend auf dem tatsächlichen Datum
+            const [year, month, day] = dateKey.split('-').map(Number);
+            const date = new Date(year, month - 1, day);
+            if (date.getDay() === 0 || date.getDay() === 6) {
                 cell.classList.add('weekend-cell');
             }
         });
