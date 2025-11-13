@@ -490,9 +490,21 @@ document.addEventListener('keydown', async (e) => {
         const linkKey = `${employee}-${dateKey}-link`;
         const addressKey = `${employee}-${dateKey}-address`;
 
+        // Extrahiere Status korrekt: zuerst aus assignments, dann aus CSS-Klassen
+        const assignment = assignments[employee]?.[dateKey];
+        let status = assignment?.status || null;
+        
+        // Falls kein Status in assignments, prüfe CSS-Klassen
+        if (!status) {
+            const statusClass = Array.from(firstCell.classList).find(cls => cls.startsWith('status-'));
+            if (statusClass) {
+                status = statusClass.replace('status-', '');
+            }
+        }
+
         copiedContent = {
             text: firstCell.querySelector('.cell-text')?.textContent || '',
-            status: Array.from(firstCell.classList).find(cls => cls.startsWith('status-')),
+            status: status, // Kann null sein, aber nie undefined
             note: cellNotes[noteKey] || '',
             link: cellLinks[linkKey] || '',
             address: cellAddresses[addressKey] || ''
@@ -512,15 +524,29 @@ document.addEventListener('keydown', async (e) => {
             const linkKey = `${employee}-${dateKey}-link`;
             const addressKey = `${employee}-${dateKey}-address`;
             
+            // Entferne colspan sofort, bevor wir etwas setzen
+            cell.removeAttribute('colspan');
+            cell.style.width = '';
+            cell.style.position = '';
+            cell.style.zIndex = '';
+            
             // Setze Text und Status
-            if (copiedContent.text) {
+            if (copiedContent.text || copiedContent.status) {
                 if (!assignments[employee]) {
                     assignments[employee] = {};
                 }
-                assignments[employee][dateKey] = {
-                    text: copiedContent.text,
-                    status: copiedContent.status
-                };
+                // Nur speichern, wenn Status vorhanden ist (nicht undefined/null)
+                if (copiedContent.status) {
+                    assignments[employee][dateKey] = {
+                        text: copiedContent.text || '',
+                        status: copiedContent.status
+                    };
+                } else {
+                    // Wenn kein Status, speichere nur Text
+                    assignments[employee][dateKey] = {
+                        text: copiedContent.text || ''
+                    };
+                }
                 cell.className = 'calendar-cell';
                 if (copiedContent.status) {
                     cell.classList.add(copiedContent.status);
@@ -581,6 +607,20 @@ document.addEventListener('keydown', async (e) => {
             const date = new Date(year, month - 1, day);
             if (date.getDay() === 0 || date.getDay() === 6) {
                 cell.classList.add('weekend-cell');
+            }
+            
+            // Aktualisiere die Zelle mit updateCell
+            // WICHTIG: Wenn ein Status vorhanden ist, darf NICHT erstreckt werden
+            updateCell(cell, employee, dateKey);
+            
+            // Stelle sicher, dass colspan entfernt ist, wenn ein Status vorhanden ist
+            // (updateCell sollte das schon machen, aber zur Sicherheit nochmal prüfen)
+            const finalAssignment = assignments[employee]?.[dateKey];
+            if (finalAssignment?.status) {
+                cell.removeAttribute('colspan');
+                cell.style.width = '';
+                cell.style.position = '';
+                cell.style.zIndex = '';
             }
         });
         
@@ -1441,7 +1481,8 @@ async function applyStatusToSelectedCells(status) {
                 assignments[employee][dateKey].status = status;
             }
             
-            // Entferne colspan, wenn ein Status-Button gesetzt wird
+            // Entferne colspan IMMER, wenn ein Status-Button gesetzt wird
+            // (muss VOR updateCell passieren)
             cell.removeAttribute('colspan');
             cell.style.width = '';
             cell.style.position = '';
@@ -1813,6 +1854,29 @@ document.getElementById('cancelExport').addEventListener('click', () => {
     document.getElementById('exportModal').style.display = 'none';
 });
 
+// Event Listener für Export-Bereich Änderung
+document.querySelectorAll('input[name="exportRange"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+        const yearSelection = document.getElementById('yearSelection');
+        if (e.target.value === 'all') {
+            yearSelection.style.display = 'block';
+            // Fülle Jahr-Auswahl mit verfügbaren Jahren
+            const yearSelect = document.getElementById('exportYear');
+            yearSelect.innerHTML = '';
+            const currentYear = currentDate.getFullYear();
+            for (let year = 2025; year <= currentYear + 5; year++) {
+                const option = document.createElement('option');
+                option.value = year;
+                option.textContent = year;
+                if (year === currentYear) option.selected = true;
+                yearSelect.appendChild(option);
+            }
+        } else {
+            yearSelection.style.display = 'none';
+        }
+    });
+});
+
 document.getElementById('confirmExport').addEventListener('click', () => {
     const exportRange = document.querySelector('input[name="exportRange"]:checked').value;
     const exportFormats = Array.from(document.querySelectorAll('input[name="exportFormat"]:checked')).map(input => input.value);
@@ -1823,12 +1887,17 @@ document.getElementById('confirmExport').addEventListener('click', () => {
     }
     
     try {
+        let exportYear = currentDate.getFullYear();
+        if (exportRange === 'all') {
+            exportYear = parseInt(document.getElementById('exportYear').value);
+        }
+        
         if (exportFormats.includes('json')) {
-            exportJSON(exportRange);
+            exportJSON(exportRange, exportYear);
         }
         
         if (exportFormats.includes('excel')) {
-            exportExcel(exportRange);
+            exportExcel(exportRange, exportYear);
         }
         
         document.getElementById('exportModal').style.display = 'none';
@@ -1838,7 +1907,7 @@ document.getElementById('confirmExport').addEventListener('click', () => {
     }
 });
 
-function exportJSON(range) {
+function exportJSON(range, year = null) {
     // Verwende die globalen Variablen, die aus Firebase geladen wurden (nicht localStorage)
     const data = {
         employees: employees || [],
@@ -1874,6 +1943,30 @@ function exportJSON(range) {
                 })
             );
         });
+    } else if (range === 'all' && year) {
+        // Filtere die Daten für das gewählte Jahr
+        Object.keys(data.assignments).forEach(employee => {
+            data.assignments[employee] = Object.fromEntries(
+                Object.entries(data.assignments[employee]).filter(([key]) => {
+                    const [y] = key.split('-');
+                    return parseInt(y) === year;
+                })
+            );
+        });
+        
+        // Filtere Notizen, Links und Adressen
+        ['cellNotes', 'cellLinks', 'cellAddresses'].forEach(key => {
+            data[key] = Object.fromEntries(
+                Object.entries(data[key]).filter(([key]) => {
+                    const parts = key.split('-');
+                    if (parts.length >= 2) {
+                        const y = parseInt(parts[1]);
+                        return y === year;
+                    }
+                    return false;
+                })
+            );
+        });
     }
 
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1882,14 +1975,14 @@ function exportJSON(range) {
     a.href = url;
     a.download = `arbeitsplan_${range === 'currentMonth' ? 
         `${currentDate.getFullYear()}-${currentDate.getMonth() + 1}` : 
-        'backup'}.json`;
+        year ? `${year}` : 'backup'}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 }
 
-function exportExcel(range) {
+function exportExcel(range, year = null) {
     const months = [
         'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
         'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'
@@ -1902,16 +1995,18 @@ function exportExcel(range) {
         const wb = XLSX.utils.book_new();
         console.log('Arbeitsmappe erstellt');
         
+        const exportYear = year || currentDate.getFullYear();
+        
         if (range === 'currentMonth') {
             console.log('Exportiere aktuellen Monat:', months[currentDate.getMonth()]);
             // Exportiere nur aktuellen Monat
             const ws = createWorksheetForMonth(currentDate.getFullYear(), currentDate.getMonth());
             XLSX.utils.book_append_sheet(wb, ws, `Arbeitsplan ${months[currentDate.getMonth()]}`);
         } else {
-            console.log('Exportiere alle Monate');
-            // Exportiere alle Monate
+            console.log(`Exportiere alle Monate für Jahr ${exportYear}`);
+            // Exportiere alle Monate für das gewählte Jahr
             for (let month = 0; month < 12; month++) {
-                const ws = createWorksheetForMonth(currentDate.getFullYear(), month);
+                const ws = createWorksheetForMonth(exportYear, month);
                 XLSX.utils.book_append_sheet(wb, ws, months[month]);
             }
         }
@@ -1919,7 +2014,7 @@ function exportExcel(range) {
         // Exportiere Excel-Datei
         const fileName = `arbeitsplan_${range === 'currentMonth' ? 
             `${months[currentDate.getMonth()]}_${currentDate.getFullYear()}` : 
-            'komplett'}.xlsx`;
+            `komplett_${exportYear}`}.xlsx`;
             
         console.log('Erstelle Excel-Datei:', fileName);
 
@@ -1985,42 +2080,78 @@ function createWorksheetForMonth(year, month) {
             'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'
         ];
         
-        // Erstelle Daten für Excel
-        const table = document.querySelector('.calendar');
-        if (!table) {
-            throw new Error('Kalender-Tabelle nicht gefunden');
-        }
-        
-        const rows = Array.from(table.rows);
-        if (rows.length === 0) {
-            throw new Error('Keine Daten in der Tabelle gefunden');
-        }
+        // Berechne die Anzahl der Tage im Monat
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
         
         // Erstelle Header-Zeile
         const headerRow = ['Mitarbeiter'];
-        const firstRow = rows[0];
-        for (let i = 1; i < firstRow.cells.length; i++) {
-            const cell = firstRow.cells[i];
-            const day = cell.querySelector('span:last-child')?.textContent || '';
-            const weekday = cell.querySelector('span:first-child')?.textContent || '';
+        const weekdays = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+        
+        for (let day = 1; day <= daysInMonth; day++) {
+            const date = new Date(year, month, day);
+            const weekday = weekdays[date.getDay()];
             headerRow.push(`${day} ${weekday}`);
         }
         
-        // Erstelle Daten-Zeilen
+        // Erstelle Daten-Zeilen aus assignments und cellNotes
         const dataRows = [];
-        for (let i = 1; i < rows.length; i++) {
-            const row = rows[i];
-            const employeeName = row.cells[0].querySelector('span')?.textContent || '';
-            const rowData = [employeeName];
+        
+        // Filtere Mitarbeiter, die in diesem Monat aktiv sind
+        const activeEmployees = employees.filter(employee => {
+            if (!employeeStartDates[employee] && !employeeEndDates[employee]) {
+                return true; // Keine Start-/Enddaten = immer aktiv
+            }
+            const startDate = new Date(employeeStartDates[employee] || '2000-01-01');
+            const endDate = employeeEndDates[employee] ? new Date(employeeEndDates[employee]) : new Date('2100-12-31');
+            const monthStart = new Date(year, month, 1);
+            return isDateInRange(monthStart, startDate, endDate);
+        });
+        
+        activeEmployees.forEach(employee => {
+            const rowData = [employee];
             
-            for (let j = 1; j < row.cells.length; j++) {
-                const cell = row.cells[j];
-                const cellText = cell.querySelector('.cell-text')?.textContent || '';
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateKey = `${year}-${month + 1}-${day}`;
+                const noteKey = `${employee}-${dateKey}`;
+                
+                // Prüfe zuerst assignments (Status-Buttons)
+                const assignment = assignments[employee]?.[dateKey];
+                let cellText = '';
+                
+                if (assignment) {
+                    // Wenn ein Status vorhanden ist, zeige den Status-Text
+                    // AUSNAHME: Bei "abgerechnet" zeige nur den Text, nicht "Abgerechnet"
+                    if (assignment.status && assignment.status !== 'abgerechnet') {
+                        const statusTexts = {
+                            'urlaub': 'Urlaub',
+                            'krank': 'Krankheit',
+                            'unbezahlt': 'Unbezahlter Urlaub',
+                            'schulung': 'Schule',
+                            'feiertag': 'Feiertag',
+                            'kurzarbeit': 'Kurzarbeit',
+                            'ueberstunden': 'Überstunden frei'
+                        };
+                        cellText = statusTexts[assignment.status] || assignment.text || '';
+                    } else {
+                        // Bei "abgerechnet" oder keinem Status: zeige nur den Text
+                        cellText = assignment.text || '';
+                    }
+                }
+                
+                // Wenn eine Notiz vorhanden ist, füge sie hinzu
+                if (cellNotes[noteKey] && cellNotes[noteKey].trim()) {
+                    if (cellText) {
+                        cellText += ' - ' + cellNotes[noteKey];
+                    } else {
+                        cellText = cellNotes[noteKey];
+                    }
+                }
+                
                 rowData.push(cellText);
             }
             
             dataRows.push(rowData);
-        }
+        });
         
         // Erstelle das Worksheet
         const data = [
@@ -2101,12 +2232,49 @@ function importData(file) {
             // Aktualisiere die Anzeige
             updateCalendar();
             
-            // Zeige Undo-Option
-            const undo = confirm('Daten wurden erfolgreich importiert!\n\nMöchten Sie die Änderung rückgängig machen?');
-            if (undo) {
-                await undoImport();
+            // Zeige Undo-Option mit Ja/Nein Modal
+            const undoModal = document.getElementById('undoImportModal');
+            if (undoModal) {
+                undoModal.style.display = 'block';
+                
+                const confirmBtn = document.getElementById('confirmUndo');
+                const cancelBtn = document.getElementById('cancelUndo');
+                
+                // Entferne alte Event Listener (falls vorhanden)
+                const newConfirmBtn = confirmBtn.cloneNode(true);
+                const newCancelBtn = cancelBtn.cloneNode(true);
+                confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+                cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+                
+                const handleConfirm = async () => {
+                    undoModal.style.display = 'none';
+                    await undoImport();
+                };
+                
+                const handleCancel = () => {
+                    undoModal.style.display = 'none';
+                    importBackup = null; // Backup löschen, wenn nicht rückgängig gemacht
+                };
+                
+                newConfirmBtn.addEventListener('click', handleConfirm);
+                newCancelBtn.addEventListener('click', handleCancel);
+                
+                // Schließe Modal beim Klick außerhalb
+                const handleModalClick = (e) => {
+                    if (e.target === undoModal) {
+                        handleCancel();
+                        undoModal.removeEventListener('click', handleModalClick);
+                    }
+                };
+                undoModal.addEventListener('click', handleModalClick);
             } else {
-                importBackup = null; // Backup löschen, wenn nicht rückgängig gemacht
+                // Fallback zu confirm, falls Modal nicht gefunden
+                const undo = window.confirm('Daten wurden erfolgreich importiert!\n\nMöchten Sie die Änderung rückgängig machen?');
+                if (undo) {
+                    await undoImport();
+                } else {
+                    importBackup = null;
+                }
             }
         } catch (error) {
             console.error('Fehler beim Importieren:', error);
@@ -2177,67 +2345,15 @@ document.getElementById('importData').addEventListener('change', (e) => {
 });
 
 // Funktion zum Erstrecken von Text über mehrere Zellen
+// DEAKTIVIERT: Jedes Feld bleibt in seiner eigenen Zelle
 function extendTextOverCells(cell, employee, dateKey) {
-    if (!cell || !cell.parentElement) {
-        console.warn('extendTextOverCells: Zelle oder parentElement ist null');
-        return;
-    }
-    const row = cell.parentElement;
-    if (!row || !row.children) {
-        console.warn('extendTextOverCells: row oder row.children ist null');
-        return;
-    }
-    const dayIndex = Array.from(row.children).indexOf(cell);
-    if (dayIndex === -1) {
-        console.warn('extendTextOverCells: Zelle nicht in row.children gefunden');
-        return;
-    }
-    
-    const cellText = cell.querySelector('.cell-text');
-    if (!cellText || !cellText.textContent || !cellText.textContent.trim()) {
-        // Wenn kein Text, entferne colspan
+    // Funktion deaktiviert - jedes Feld bleibt in seiner eigenen Zelle
+    // Entferne immer colspan, falls vorhanden
+    if (cell) {
         cell.removeAttribute('colspan');
         cell.style.width = '';
-        return;
-    }
-    
-    // Prüfe, ob die nächste Zelle leer ist
-    let spanCount = 1;
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth() + 1;
-    
-    // Erstrecke über leere Zellen nach rechts
-    if (!row.children || row.children.length === 0) {
-        console.warn('extendTextOverCells: row.children ist leer');
-        return;
-    }
-    
-    for (let i = dayIndex + 1; i < row.children.length; i++) {
-        const nextCell = row.children[i];
-        if (!nextCell || nextCell === row.children[0]) break;
-        
-        const nextDay = i; // Tag-Index
-        const nextDateKey = `${year}-${month}-${nextDay}`;
-        const nextNoteKey = `${employee}-${nextDateKey}`;
-        const nextAssignment = assignments[employee]?.[nextDateKey];
-        
-        // Wenn die nächste Zelle leer ist (keine Notiz, keine Zuweisung, keine Links/Adressen)
-        if (!cellNotes[nextNoteKey] && !nextAssignment && 
-            !cellLinks[`${employee}-${nextDateKey}-link`] && 
-            !cellAddresses[`${employee}-${nextDateKey}-address`]) {
-            spanCount++;
-        } else {
-            break;
-        }
-    }
-    
-    // Setze colspan, wenn mehr als eine Zelle
-    if (spanCount > 1) {
-        cell.setAttribute('colspan', spanCount);
-        cell.style.position = 'relative';
-        cell.style.zIndex = '1';
-    } else {
-        cell.removeAttribute('colspan');
+        cell.style.position = '';
+        cell.style.zIndex = '';
     }
 }
 
@@ -2336,25 +2452,13 @@ function updateCell(cell, employee, dateKey) {
         cell.setAttribute('data-info', cellNotes[noteKey]);
     }
     
-    // Erstrecke Text über mehrere Zellen, wenn möglich
-    // Nur wenn es eine Notiz gibt, nicht bei Status-Buttons
-    // Prüfe, ob die Zelle noch im DOM ist
-    if (cell && cell.parentElement && cell.parentElement.children) {
-        // Nur erstrecken, wenn es eine Notiz gibt und kein Status-Button
-        const hasNote = cellNotes[noteKey] && cellNotes[noteKey].trim();
-        const hasStatus = assignments[employee]?.[dateKey]?.status;
-        
-        // Erstrecke nur, wenn es eine Notiz gibt, aber keinen Status-Button
-        // (Status-Buttons sollen nicht erstreckt werden)
-        if (hasNote && !hasStatus) {
-            extendTextOverCells(cell, employee, dateKey);
-        } else {
-            // Entferne colspan, wenn es ein Status-Button ist
-            cell.removeAttribute('colspan');
-            cell.style.width = '';
-            cell.style.position = '';
-            cell.style.zIndex = '';
-        }
+    // Stelle sicher, dass jedes Feld in seiner eigenen Zelle bleibt
+    // Entferne immer colspan, damit sich keine Felder erstrecken
+    if (cell) {
+        cell.removeAttribute('colspan');
+        cell.style.width = '';
+        cell.style.position = '';
+        cell.style.zIndex = '';
     }
 }
 

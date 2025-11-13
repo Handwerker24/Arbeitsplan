@@ -128,6 +128,14 @@
                             Gesamten Plan exportieren
                         </label>
                     </div>
+                    <div id="yearSelection" style="display: none; margin-top: 15px;">
+                        <label>
+                            <strong>Jahr auswählen:</strong>
+                            <select id="exportYear" style="margin-left: 10px; padding: 5px;">
+                                <!-- Wird dynamisch gefüllt -->
+                            </select>
+                        </label>
+                    </div>
                 </div>
                 <div class="export-formats">
                     <h3>Dateiformate</h3>
@@ -146,6 +154,19 @@
             <div class="modal-buttons">
                 <button id="confirmExport">Exportieren</button>
                 <button id="cancelExport">Abbrechen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal für Import-Rückgängig -->
+    <div id="undoImportModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h2>Import erfolgreich</h2>
+            <p>Daten wurden erfolgreich importiert!</p>
+            <p>Möchten Sie die Änderung rückgängig machen?</p>
+            <div class="modal-buttons">
+                <button id="confirmUndo">Ja</button>
+                <button id="cancelUndo">Nein</button>
             </div>
         </div>
     </div>
