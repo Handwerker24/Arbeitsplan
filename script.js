@@ -1441,6 +1441,12 @@ async function applyStatusToSelectedCells(status) {
                 assignments[employee][dateKey].status = status;
             }
             
+            // Entferne colspan, wenn ein Status-Button gesetzt wird
+            cell.removeAttribute('colspan');
+            cell.style.width = '';
+            cell.style.position = '';
+            cell.style.zIndex = '';
+            
             // Aktualisiere die Zelle mit updateCell für konsistente Anzeige
             updateCell(cell, employee, dateKey);
         }
@@ -2331,9 +2337,24 @@ function updateCell(cell, employee, dateKey) {
     }
     
     // Erstrecke Text über mehrere Zellen, wenn möglich
+    // Nur wenn es eine Notiz gibt, nicht bei Status-Buttons
     // Prüfe, ob die Zelle noch im DOM ist
     if (cell && cell.parentElement && cell.parentElement.children) {
-        extendTextOverCells(cell, employee, dateKey);
+        // Nur erstrecken, wenn es eine Notiz gibt und kein Status-Button
+        const hasNote = cellNotes[noteKey] && cellNotes[noteKey].trim();
+        const hasStatus = assignments[employee]?.[dateKey]?.status;
+        
+        // Erstrecke nur, wenn es eine Notiz gibt, aber keinen Status-Button
+        // (Status-Buttons sollen nicht erstreckt werden)
+        if (hasNote && !hasStatus) {
+            extendTextOverCells(cell, employee, dateKey);
+        } else {
+            // Entferne colspan, wenn es ein Status-Button ist
+            cell.removeAttribute('colspan');
+            cell.style.width = '';
+            cell.style.position = '';
+            cell.style.zIndex = '';
+        }
     }
 }
 
