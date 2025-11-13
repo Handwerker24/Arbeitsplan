@@ -1259,9 +1259,11 @@ function getDateKeyFromCell(cell) {
     const headerCell = headerCells[dayIndex];
     if (!headerCell) return null;
     
-    // Prüfe, ob es eine Wochenansicht ist (hat weekday-header)
-    const weekdayHeader = headerCell.querySelector('.weekday-header');
-    if (weekdayHeader) {
+    // Prüfe, ob es eine Wochenansicht ist: Wochenansicht hat genau 8 Header-Zellen (1 Mitarbeiter + 7 Tage)
+    // Monatsansicht hat mehr als 8 Header-Zellen
+    const isWeekView = headerCells.length === 8;
+    
+    if (isWeekView) {
         // Wochenansicht: Berechne Datum aus Montag + Tag-Offset
         const monday = getCurrentWeek();
         const cellDate = new Date(monday);
@@ -1437,11 +1439,10 @@ async function applyStatusToSelectedCells(status) {
                 }
                 assignments[employee][dateKey].text = statusText;
                 assignments[employee][dateKey].status = status;
-                
-                cell.textContent = statusText;
-                cell.style.backgroundColor = statusColors[status];
-                cell.style.color = 'black';
             }
+            
+            // Aktualisiere die Zelle mit updateCell für konsistente Anzeige
+            updateCell(cell, employee, dateKey);
         }
         
         // Prüfe Wochenende basierend auf dem tatsächlichen Datum
