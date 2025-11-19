@@ -90,7 +90,8 @@ class FirebaseDB {
             employeeEndDates: await this.loadData('employeeEndDates') || {},
             cellNotes: await this.loadData('cellNotes') || {},
             cellLinks: await this.loadData('cellLinks') || {},
-            cellAddresses: await this.loadData('cellAddresses') || {}
+            cellAddresses: await this.loadData('cellAddresses') || {},
+            mergedCells: await this.loadData('mergedCells') || {}
         };
         return data;
     }
@@ -138,4 +139,3 @@ if (typeof firebase !== 'undefined' && database) {
         }, 100);
     }
 }
-

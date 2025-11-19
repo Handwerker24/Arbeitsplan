@@ -13,6 +13,7 @@ let copiedContent = null; // Speichert den kopierten Inhalt
 let isZoomedOut = false;
 let cellAddresses = {};
 let isWeekView = false; // Neue Variable für den Ansichtsmodus
+let mergedCells = {}; // Speichert Zusammenführungen: { "employee-dateKey": { mergedCells: [...], removedCells: [...] } }
 // firebaseDB wird in firebase-simple.js deklariert
 
 // Undo-Funktionalität
@@ -74,6 +75,7 @@ async function initializeFirebase() {
             cellNotes = data.cellNotes || {};
             cellLinks = data.cellLinks || {};
             cellAddresses = data.cellAddresses || {};
+            mergedCells = data.mergedCells || {};
             
             console.log('Daten aus Firebase geladen (Firebase hat Vorrang):', { 
                 employees: employees.length, 
@@ -103,6 +105,7 @@ async function initializeFirebase() {
                     saveData('cellNotes', cellNotes);
                     saveData('cellLinks', cellLinks);
                     saveData('cellAddresses', cellAddresses);
+                    saveData('mergedCells', mergedCells);
                     console.log('Daten von localStorage zu Firebase migriert');
                 } else {
                     console.log('Auch localStorage ist leer, starte mit leeren Daten');
@@ -128,21 +131,30 @@ function loadDataFromLocalStorage() {
     cellNotes = JSON.parse(localStorage.getItem('cellNotes')) || {};
     cellLinks = JSON.parse(localStorage.getItem('cellLinks')) || {};
     cellAddresses = JSON.parse(localStorage.getItem('cellAddresses')) || {};
+    mergedCells = JSON.parse(localStorage.getItem('mergedCells')) || {};
     console.log('Daten aus localStorage geladen');
 }
 
 // Daten speichern (Firebase oder localStorage)
 async function saveData(key, data) {
-    const db = window.firebaseDB || firebaseDB;
-    if (db) {
-        try {
+    // Setze Flag, dass Benutzer gerade bearbeitet
+    isUserEditing = true;
+    
+    try {
+        const db = window.firebaseDB || firebaseDB;
+        if (db) {
             await db.saveData(key, data);
-        } catch (error) {
-            console.error(`Fehler beim Speichern in Firebase (${key}):`, error);
-            // Fallback zu localStorage
+        } else {
             localStorage.setItem(key, JSON.stringify(data));
         }
-    } else {
+        
+        // Setze Flag nach 2 Sekunden zurück
+        setTimeout(() => {
+            isUserEditing = false;
+        }, 2000);
+    } catch (error) {
+        console.error(`Fehler beim Speichern von ${key}:`, error);
+        isUserEditing = false;
         // Fallback zu localStorage
         localStorage.setItem(key, JSON.stringify(data));
     }
@@ -461,9 +473,14 @@ document.addEventListener('keydown', async (e) => {
                 delete assignments[employee][dateKey];
             }
             
-            // Setze Zelleninhalt zurück
+            // Setze Zelleninhalt zurück und entferne ALLE Styles und Klassen
             cell.innerHTML = '<div class="cell-content"><div class="cell-text"></div></div>';
             cell.className = 'calendar-cell';
+            cell.style.backgroundColor = '';
+            cell.style.color = '';
+            cell.classList.remove('status-urlaub', 'status-krank', 'status-unbezahlt', 
+                'status-schulung', 'status-feiertag', 'status-kurzarbeit', 
+                'status-abgerechnet', 'status-ueberstunden');
             
             // Prüfe Wochenende basierend auf dem tatsächlichen Datum
             const [year, month, day] = dateKey.split('-').map(Number);
@@ -471,6 +488,14 @@ document.addEventListener('keydown', async (e) => {
             if (date.getDay() === 0 || date.getDay() === 6) {
                 cell.classList.add('weekend-cell');
             }
+            
+            // Logge die Löschung (vor dem Löschen, damit wir den Text noch haben)
+            const deletedText = cellNotes[noteKey] || assignments[employee]?.[dateKey]?.text || '';
+            addToAuditLog('Eintrag gelöscht', { 
+                employee: employee, 
+                date: dateKey,
+                deletedText: deletedText
+            });
         });
         
         await saveData('cellNotes', cellNotes);
@@ -629,6 +654,17 @@ document.addEventListener('keydown', async (e) => {
         await saveData('cellAddresses', cellAddresses);
         await saveData('assignments', assignments);
     }
+    
+    // Strg+X für Feld-Zusammenführung
+    // Prüfe, ob mindestens 2 Zellen markiert sind ODER ob ein zusammengeführtes Feld markiert ist
+    const hasMergedCell = selectedCells.size > 0 && Array.from(selectedCells).some(cell => 
+        cell.hasAttribute('data-merged') || cell.hasAttribute('data-merged-into')
+    );
+    
+    if (e.ctrlKey && e.key === 'x' && (selectedCells.size > 1 || hasMergedCell)) {
+        e.preventDefault();
+        await mergeSelectedCells();
+    }
 });
 
 // Initialisierung
@@ -661,6 +697,10 @@ async function initializeApp() {
         updateCalendar();
         setupInfoFieldListeners();
         setupEventListeners();
+        
+        // Starte Auto-Refresh
+        startAutoRefresh();
+        
         console.log('App initialisiert');
     } else {
         console.error('DOM-Elemente nicht gefunden!');
@@ -748,14 +788,152 @@ function updateCalendar() {
     
     if (window.innerWidth <= 768) {
         setupMobileWeekView();
+        // restoreMergedCells() wird bereits in showCurrentWeek() aufgerufen
         return;
     }
     
     if (isWeekView) {
         setupDesktopWeekView();
+        // restoreMergedCells() wird bereits in showCurrentWeek() aufgerufen
     } else {
         setupDesktopMonthView();
+        // Stelle zusammengeführte Zellen wieder her
+        setTimeout(() => restoreMergedCells(), 200);
     }
+}
+
+// Funktion zum Wiederherstellen der Zusammenführungen nach updateCalendar
+function restoreMergedCells() {
+    if (!mergedCells || Object.keys(mergedCells).length === 0) {
+        console.log('restoreMergedCells: Keine mergedCells gefunden');
+        return;
+    }
+    
+    console.log('restoreMergedCells: Starte Wiederherstellung, mergedCells:', mergedCells);
+    
+    Object.keys(mergedCells).forEach(mergeKey => {
+        const parts = mergeKey.split('-');
+        if (parts.length < 4) {
+            console.warn('Ungültiger mergeKey:', mergeKey);
+            return;
+        }
+        
+        // mergeKey Format: "employee-year-month-day"
+        const employee = parts[0];
+        const firstDateKey = parts.slice(1).join('-'); // Rest ist das Datum
+        const mergeData = mergedCells[mergeKey];
+        
+        console.log('Wiederherstelle Merge:', { employee, firstDateKey, mergeData });
+        
+        // Finde die Zeile des Mitarbeiters
+        const rows = document.querySelectorAll('tbody tr');
+        let targetRow = null;
+        for (const row of rows) {
+            const nameCell = row.querySelector('td:first-child span');
+            if (nameCell && nameCell.textContent === employee) {
+                targetRow = row;
+                break;
+            }
+        }
+        
+        if (!targetRow) {
+            console.warn('Zeile für Mitarbeiter nicht gefunden:', employee);
+            return;
+        }
+        
+        // Finde die erste Zelle über data-date Attribut
+        const allCells = Array.from(targetRow.children);
+        const firstCell = allCells.find(c => {
+            const cellDateKey = c.getAttribute('data-date');
+            return cellDateKey === firstDateKey;
+        });
+        
+        if (!firstCell) {
+            console.warn('Erste Zelle nicht gefunden für dateKey:', firstDateKey);
+            return;
+        }
+        
+        console.log('Erste Zelle gefunden, stelle Zusammenführung wieder her');
+        
+        // Stelle die Zusammenführung wieder her mit CSS-Positionierung
+        const spanCount = mergeData.mergedCells ? mergeData.mergedCells.length : 1;
+        
+        // Warte kurz, damit die Zellen gerendert sind
+        setTimeout(() => {
+            // Berechne die Gesamtbreite aus allen zusammengeführten Zellen
+            let totalWidth = 0;
+            const cellsToMeasure = [firstCell];
+            
+            // Finde alle zusammengeführten Zellen
+            if (mergeData.mergedCells && mergeData.mergedCells.length > 1) {
+                for (let i = 1; i < mergeData.mergedCells.length; i++) {
+                    const dateKey = mergeData.mergedCells[i];
+                    const hiddenCell = allCells.find(c => {
+                        const cellDateKey = c.getAttribute('data-date');
+                        return cellDateKey === dateKey;
+                    });
+                    if (hiddenCell) {
+                        cellsToMeasure.push(hiddenCell);
+                    }
+                }
+            }
+            
+            // Berechne Gesamtbreite
+            cellsToMeasure.forEach(cell => {
+                const rect = cell.getBoundingClientRect();
+                if (rect.width > 0) {
+                    totalWidth += rect.width;
+                } else {
+                    totalWidth += cell.offsetWidth || 100;
+                }
+            });
+            
+            if (totalWidth === 0) {
+                totalWidth = 100 * spanCount; // Fallback
+            }
+            
+            // Stelle die Zusammenführung wieder her mit colspan
+            const spanCount = mergeData.mergedCells ? mergeData.mergedCells.length : 1;
+            
+            console.log('Wiederherstelle Zusammenführung:', { spanCount });
+            
+            // Entferne vorhandene Zellen, die Teil der Zusammenführung sein sollten
+            const cellsToRemove = [];
+            if (mergeData.mergedCells && mergeData.mergedCells.length > 1) {
+                for (let i = 1; i < mergeData.mergedCells.length; i++) {
+                    const dateKey = mergeData.mergedCells[i];
+                    const cellToRemove = allCells.find(c => {
+                        const cellDateKey = c.getAttribute('data-date');
+                        return cellDateKey === dateKey && !c.hasAttribute('data-merged');
+                    });
+                    if (cellToRemove) {
+                        cellsToRemove.push(cellToRemove);
+                    }
+                }
+            }
+            
+            // Entferne die Zellen
+            cellsToRemove.forEach(cell => cell.remove());
+            
+            // Setze colspan auf die erste Zelle
+            firstCell.setAttribute('colspan', spanCount);
+            firstCell.setAttribute('data-merged', 'true');
+            firstCell.setAttribute('data-merged-cells', JSON.stringify(mergeData.mergedCells || []));
+            
+            // Aktualisiere die erste Zelle (aber behalte colspan)
+            const savedColspan = firstCell.getAttribute('colspan') || spanCount;
+            updateCell(firstCell, employee, firstDateKey);
+            
+            // Stelle sicher, dass colspan erhalten bleibt
+            if (firstCell.hasAttribute('data-merged')) {
+                firstCell.setAttribute('colspan', savedColspan);
+            }
+        }, 100);
+        
+        console.log('Zusammenführung wiederhergestellt für:', mergeKey);
+    });
+    
+    console.log('restoreMergedCells: Abgeschlossen');
 }
 
 function setupDesktopWeekView() {
@@ -1004,6 +1182,10 @@ function setupDesktopMonthView() {
                 const date = new Date(year, month, day);
                 const dateKey = `${year}-${month + 1}-${day}`;
                 
+                // Setze data-date Attribut für einfachere Identifikation
+                cell.setAttribute('data-date', dateKey);
+                cell.setAttribute('data-employee', employee);
+                
                 if (date.getDay() === 0 || date.getDay() === 6) {
                     cell.classList.add('weekend-cell');
                 }
@@ -1087,6 +1269,59 @@ function setupDesktopMonthView() {
                     e.preventDefault();
                     showInfoField(cell, employee, dateKey, true);
                 });
+                
+                // Mobile Touch-Events: Long-Press und Touch-Drag
+                let longPressTimer = null;
+                let touchStartCell = null;
+                let touchMoved = false;
+                
+                cell.addEventListener('touchstart', (e) => {
+                    touchStartCell = cell;
+                    touchMoved = false;
+                    longPressTimer = setTimeout(() => {
+                        if (!touchMoved) {
+                            e.preventDefault();
+                            showMobileContextMenu(cell, employee, dateKey, e.touches[0]);
+                        }
+                    }, 500); // 500ms für Long-Press
+                });
+                
+                cell.addEventListener('touchmove', (e) => {
+                    touchMoved = true;
+                    if (longPressTimer) {
+                        clearTimeout(longPressTimer);
+                        longPressTimer = null;
+                    }
+                    
+                    // Touch-Drag für Mehrfachauswahl
+                    if (touchStartCell && isSelecting) {
+                        const touch = e.touches[0];
+                        const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+                        const targetCell = elementBelow?.closest('.calendar-cell');
+                        if (targetCell && targetCell !== touchStartCell) {
+                            selectCellsBetween(touchStartCell, targetCell);
+                        }
+                    }
+                });
+                
+                cell.addEventListener('touchend', (e) => {
+                    if (longPressTimer) {
+                        clearTimeout(longPressTimer);
+                        longPressTimer = null;
+                    }
+                    
+                    if (!touchMoved && !isSelecting) {
+                        // Einfacher Touch: Toggle Auswahl
+                        toggleCellSelection(cell);
+                    }
+                    
+                    touchStartCell = null;
+                    touchMoved = false;
+                });
+                
+                // Setze data-date Attribut für einfachere Identifikation
+                cell.setAttribute('data-date', dateKey);
+                cell.setAttribute('data-employee', employee);
                 
                 row.appendChild(cell);
             }
@@ -1181,6 +1416,11 @@ function showCurrentWeek() {
             }
             
             const dateKey = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+            
+            // Setze data-date Attribut für einfachere Identifikation
+            cell.setAttribute('data-date', dateKey);
+            cell.setAttribute('data-employee', employee);
+            
             const noteKey = `${employee}-${dateKey}`;
             const linkKey = `${employee}-${dateKey}-link`;
             const addressKey = `${employee}-${dateKey}-address`;
@@ -1258,9 +1498,61 @@ function showCurrentWeek() {
                 showInfoField(cell, employee, dateKey, true);
             });
             
+            // Mobile Touch-Events: Long-Press und Touch-Drag
+            let longPressTimer = null;
+            let touchStartCell = null;
+            let touchMoved = false;
+            
+            cell.addEventListener('touchstart', (e) => {
+                touchStartCell = cell;
+                touchMoved = false;
+                longPressTimer = setTimeout(() => {
+                    if (!touchMoved) {
+                        e.preventDefault();
+                        showMobileContextMenu(cell, employee, dateKey, e.touches[0]);
+                    }
+                }, 500); // 500ms für Long-Press
+            });
+            
+            cell.addEventListener('touchmove', (e) => {
+                touchMoved = true;
+                if (longPressTimer) {
+                    clearTimeout(longPressTimer);
+                    longPressTimer = null;
+                }
+                
+                // Touch-Drag für Mehrfachauswahl
+                if (touchStartCell && isSelecting) {
+                    const touch = e.touches[0];
+                    const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+                    const targetCell = elementBelow?.closest('.calendar-cell');
+                    if (targetCell && targetCell !== touchStartCell) {
+                        selectCellsBetween(touchStartCell, targetCell);
+                    }
+                }
+            });
+            
+            cell.addEventListener('touchend', (e) => {
+                if (longPressTimer) {
+                    clearTimeout(longPressTimer);
+                    longPressTimer = null;
+                }
+                
+                if (!touchMoved && touchStartCell) {
+                    // Einfacher Touch = Toggle-Auswahl
+                    toggleCellSelection(cell);
+                }
+                
+                touchStartCell = null;
+                touchMoved = false;
+            });
+            
             row.appendChild(cell);
         }
     });
+    
+    // Stelle zusammengeführte Zellen wieder her (nachdem alle Zellen erstellt wurden)
+    setTimeout(() => restoreMergedCells(), 200);
 }
 
 function navigateWeek(direction) {
@@ -1281,6 +1573,12 @@ function getCurrentWeek() {
 // Berücksichtigt sowohl Monats- als auch Wochenansicht
 function getDateKeyFromCell(cell) {
     if (!cell || !cell.parentElement) return null;
+    
+    // Prüfe zuerst, ob die Zelle ein data-date Attribut hat (schneller und zuverlässiger)
+    const dataDate = cell.getAttribute('data-date');
+    if (dataDate) {
+        return dataDate;
+    }
     
     const row = cell.parentElement;
     const dayIndex = Array.from(row.children).indexOf(cell);
@@ -1484,6 +1782,14 @@ async function applyStatusToSelectedCells(status) {
             // Entferne colspan IMMER, wenn ein Status-Button gesetzt wird
             // (muss VOR updateCell passieren)
             cell.removeAttribute('colspan');
+            
+            // Logge die Button-Markierung
+            addToAuditLog('Button markiert', {
+                employee: employee,
+                date: dateKey,
+                status: status,
+                statusText: statusText
+            });
             cell.style.width = '';
             cell.style.position = '';
             cell.style.zIndex = '';
@@ -2338,6 +2644,41 @@ document.getElementById('showAuditLog').addEventListener('click', () => {
     showAuditLog();
 });
 
+// Event Listener für Auswertung
+document.getElementById('showEvaluation').addEventListener('click', () => {
+    const modal = document.getElementById('evaluationModal');
+    const yearSelect = document.getElementById('evaluationYear');
+    
+    // Fülle Jahr-Auswahl
+    yearSelect.innerHTML = '';
+    const currentYear = currentDate.getFullYear();
+    for (let year = 2025; year <= currentYear + 1; year++) {
+        const option = document.createElement('option');
+        option.value = year;
+        option.textContent = year;
+        if (year === currentYear) option.selected = true;
+        yearSelect.appendChild(option);
+    }
+    
+    modal.style.display = 'block';
+});
+
+document.getElementById('closeEvaluation').addEventListener('click', () => {
+    document.getElementById('evaluationModal').style.display = 'none';
+});
+
+document.getElementById('generateEvaluation').addEventListener('click', () => {
+    const year = parseInt(document.getElementById('evaluationYear').value);
+    generateEvaluation(year);
+});
+
+// Schließe Modal beim Klick außerhalb
+document.getElementById('evaluationModal').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('evaluationModal')) {
+        document.getElementById('evaluationModal').style.display = 'none';
+    }
+});
+
 document.getElementById('importData').addEventListener('change', (e) => {
     if (e.target.files.length > 0) {
         importData(e.target.files[0]);
@@ -2454,11 +2795,15 @@ function updateCell(cell, employee, dateKey) {
     
     // Stelle sicher, dass jedes Feld in seiner eigenen Zelle bleibt
     // Entferne immer colspan, damit sich keine Felder erstrecken
+    // AUSNAHME: Wenn die Zelle Teil einer Zusammenführung ist, behalte die Styles
     if (cell) {
-        cell.removeAttribute('colspan');
-        cell.style.width = '';
-        cell.style.position = '';
-        cell.style.zIndex = '';
+        const isMerged = cell.hasAttribute('data-merged');
+        if (!isMerged) {
+            cell.removeAttribute('colspan');
+            cell.style.width = '';
+            cell.style.position = '';
+            cell.style.zIndex = '';
+        }
     }
 }
 
@@ -2593,6 +2938,7 @@ function setupMobileWeekView() {
     
     // Zeige die aktuelle Woche
     showCurrentWeek();
+    // restoreMergedCells() wird bereits in showCurrentWeek() aufgerufen
 }
 
 // Füge den "Überstunden frei" Button hinzu (vor Abgerechnet)
@@ -2635,6 +2981,940 @@ ueberstundenButton.addEventListener('click', async () => {
 abgerechnetButton.addEventListener('click', async () => {
     await applyStatusToSelectedCells('abgerechnet');
 });
+
+// Funktion zur Generierung der Auswertung
+function generateEvaluation(year) {
+    const statusButtons = ['urlaub', 'krank', 'unbezahlt', 'schulung', 'feiertag', 'kurzarbeit', 'abgerechnet', 'ueberstunden'];
+    const statusLabels = {
+        'urlaub': 'Urlaub',
+        'krank': 'Krankheit',
+        'unbezahlt': 'Unbezahlter Urlaub',
+        'schulung': 'Schule',
+        'feiertag': 'Feiertag',
+        'kurzarbeit': 'Kurzarbeit',
+        'abgerechnet': 'Abgerechnet',
+        'ueberstunden': 'Überstunden frei'
+    };
+    
+    // Filtere Mitarbeiter, die im gewählten Jahr aktiv waren
+    const activeEmployees = employees.filter(employee => {
+        if (!employeeStartDates[employee] && !employeeEndDates[employee]) {
+            return true;
+        }
+        const startDate = new Date(employeeStartDates[employee] || '2000-01-01');
+        const endDate = employeeEndDates[employee] ? new Date(employeeEndDates[employee]) : new Date('2100-12-31');
+        const yearStart = new Date(year, 0, 1);
+        const yearEnd = new Date(year, 11, 31);
+        return (startDate <= yearEnd && endDate >= yearStart);
+    });
+    
+    // Berechne Statistik für jeden Mitarbeiter
+    const stats = {};
+    activeEmployees.forEach(employee => {
+        stats[employee] = {};
+        statusButtons.forEach(status => {
+            stats[employee][status] = 0;
+        });
+        
+        // Zähle Tage für jeden Status im Jahr
+        for (let month = 0; month < 12; month++) {
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateKey = `${year}-${month + 1}-${day}`;
+                const assignment = assignments[employee]?.[dateKey];
+                if (assignment && assignment.status) {
+                    if (stats[employee][assignment.status] !== undefined) {
+                        stats[employee][assignment.status]++;
+                    }
+                }
+            }
+        }
+    });
+    
+    // Erstelle HTML-Tabelle
+    const tableDiv = document.getElementById('evaluationTable');
+    let html = '<table style="width: 100%; border-collapse: collapse; margin-top: 20px;">';
+    html += '<thead><tr>';
+    html += '<th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2; text-align: left;">Mitarbeiter</th>';
+    statusButtons.forEach(status => {
+        html += `<th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2; text-align: center;">${statusLabels[status]}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+    
+    activeEmployees.forEach(employee => {
+        html += '<tr>';
+        html += `<td style="border: 1px solid #ddd; padding: 8px; font-weight: bold;">${employee}</td>`;
+        statusButtons.forEach(status => {
+            const count = stats[employee][status] || 0;
+            html += `<td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${count}</td>`;
+        });
+        html += '</tr>';
+    });
+    
+    html += '</tbody></table>';
+    tableDiv.innerHTML = html;
+}
+
+// Funktion zum Auflösen markierter zusammengeführter Felder
+async function unmergeSelectedCells() {
+    if (selectedCells.size === 0) return;
+    
+    saveState();
+    
+    const cellsToUnmerge = new Set();
+    
+    // Sammle alle zusammengeführten Zellen, die aufgelöst werden sollen
+    selectedCells.forEach(cell => {
+        if (cell.hasAttribute('data-merged')) {
+            cellsToUnmerge.add(cell);
+        } else if (cell.hasAttribute('data-merged-into')) {
+            // Finde die Hauptzelle
+            const mergedIntoDateKey = cell.getAttribute('data-merged-into');
+            const row = cell.parentElement;
+            const mainCell = Array.from(row.children).find(c => {
+                const cellDateKey = c.getAttribute('data-date');
+                return cellDateKey === mergedIntoDateKey && c.hasAttribute('data-merged');
+            });
+            if (mainCell) {
+                cellsToUnmerge.add(mainCell);
+            }
+        }
+    });
+    
+    if (cellsToUnmerge.size === 0) {
+        console.log('Keine zusammengeführten Felder zum Auflösen gefunden');
+        return;
+    }
+    
+    console.log('Löse zusammengeführte Felder auf:', cellsToUnmerge.size);
+    
+    // Löse jede zusammengeführte Zelle auf
+    for (const cell of cellsToUnmerge) {
+        const row = cell.parentElement;
+        const employee = row.querySelector('td:first-child span')?.textContent;
+        const firstDateKey = getDateKeyFromCell(cell) || cell.getAttribute('data-date');
+        
+        if (!employee || !firstDateKey) continue;
+        
+        // Hole die zusammengeführten dateKeys
+        const mergedCellsStr = cell.getAttribute('data-merged-cells');
+        if (!mergedCellsStr) continue;
+        
+        try {
+            const mergedCellIds = JSON.parse(mergedCellsStr);
+            
+            // Entferne colspan und Attribute
+            cell.removeAttribute('colspan');
+            cell.removeAttribute('data-merged');
+            cell.removeAttribute('data-merged-cells');
+            cell.removeAttribute('data-merged-hidden-cells');
+            
+            // Erstelle die entfernten Zellen wieder
+            const firstCellIndex = Array.from(row.children).indexOf(cell);
+            
+            for (let i = 1; i < mergedCellIds.length; i++) {
+                const dateKey = mergedCellIds[i];
+                
+                // Prüfe, ob die Zelle bereits existiert (z.B. als Platzhalter)
+                const existingCell = Array.from(row.children).find(c => {
+                    const cellDateKey = c.getAttribute('data-date');
+                    return cellDateKey === dateKey;
+                });
+                
+                if (existingCell) {
+                    // Entferne Platzhalter-Attribute, falls vorhanden
+                    existingCell.removeAttribute('data-merged-placeholder');
+                    existingCell.removeAttribute('data-merged-into');
+                    existingCell.removeAttribute('data-merged-datekey');
+                    existingCell.style.display = '';
+                } else {
+                    // Erstelle eine neue Zelle
+                    const newCell = document.createElement('td');
+                    newCell.className = 'calendar-cell';
+                    newCell.setAttribute('data-date', dateKey);
+                    newCell.setAttribute('data-employee', employee);
+                    
+                    // Prüfe Wochenende
+                    const [year, month, day] = dateKey.split('-').map(Number);
+                    const date = new Date(year, month - 1, day);
+                    if (date.getDay() === 0 || date.getDay() === 6) {
+                        newCell.classList.add('weekend-cell');
+                    }
+                    
+                    // Erstelle Zellenstruktur
+                    const cellContent = document.createElement('div');
+                    cellContent.className = 'cell-content';
+                    
+                    const cellText = document.createElement('div');
+                    cellText.className = 'cell-text';
+                    cellContent.appendChild(cellText);
+                    
+                    const cellIcons = document.createElement('div');
+                    cellIcons.className = 'cell-icons';
+                    cellContent.appendChild(cellIcons);
+                    
+                    newCell.appendChild(cellContent);
+                    
+                    // Füge Event-Listener hinzu (wie in setupDesktopMonthView)
+                    newCell.addEventListener('mousedown', (e) => {
+                        e.preventDefault();
+                        if (!isSelecting) {
+                            clearSelection();
+                        }
+                        isSelecting = true;
+                        lastSelectedCell = newCell;
+                        toggleCellSelection(newCell);
+                    });
+                    
+                    newCell.addEventListener('mouseover', (e) => {
+                        if (isSelecting && lastSelectedCell) {
+                            selectCellsBetween(lastSelectedCell, newCell);
+                        }
+                    });
+                    
+                    let clickTimeout;
+                    newCell.addEventListener('click', (e) => {
+                        clearTimeout(clickTimeout);
+                        clickTimeout = setTimeout(() => {
+                            if (currentEditingCell && currentEditingCell !== newCell) {
+                                closeInfoField();
+                            }
+                        }, 200);
+                    });
+                    
+                    newCell.addEventListener('dblclick', (e) => {
+                        clearTimeout(clickTimeout);
+                        e.preventDefault();
+                        showInfoField(newCell, employee, dateKey, true);
+                    });
+                    
+                    // Füge die Zelle ein
+                    if (row.children[firstCellIndex + i]) {
+                        row.insertBefore(newCell, row.children[firstCellIndex + i]);
+                    } else {
+                        row.appendChild(newCell);
+                    }
+                    
+                    // Aktualisiere die Zelle
+                    updateCell(newCell, employee, dateKey);
+                }
+            }
+            
+            // Entferne den Eintrag aus mergedCells
+            const mergeKey = `${employee}-${firstDateKey}`;
+            delete mergedCells[mergeKey];
+            
+            // Aktualisiere die erste Zelle
+            updateCell(cell, employee, firstDateKey);
+            
+        } catch (e) {
+            console.error('Fehler beim Auflösen der Zusammenführung:', e);
+        }
+    }
+    
+    // Speichere die Änderungen
+    await saveData('mergedCells', mergedCells);
+    
+    // Aktualisiere den Kalender
+    updateCalendar();
+    
+    clearSelection();
+    
+    console.log('Zusammengeführte Felder aufgelöst');
+}
+
+// Funktion zum Zusammenführen mehrerer markierter Felder
+async function mergeSelectedCells() {
+    // Prüfe, ob mindestens 2 Zellen markiert sind ODER ob ein zusammengeführtes Feld markiert ist
+    // Wenn ein zusammengeführtes Feld markiert ist, kann es auch nur 1 Zelle im DOM sein
+    const hasMergedCell = Array.from(selectedCells).some(cell => 
+        cell.hasAttribute('data-merged') || cell.hasAttribute('data-merged-into')
+    );
+    
+    // Prüfe, ob NUR zusammengeführte Felder markiert sind (ohne weitere normale Felder)
+    const allMergedCells = Array.from(selectedCells).every(cell => 
+        cell.hasAttribute('data-merged') || cell.hasAttribute('data-merged-into')
+    );
+    
+    // Wenn nur zusammengeführte Felder markiert sind, löse sie auf
+    if (allMergedCells && selectedCells.size > 0) {
+        console.log('Nur zusammengeführte Felder markiert, löse sie auf');
+        await unmergeSelectedCells();
+        return;
+    }
+    
+    if (selectedCells.size < 2 && !hasMergedCell) {
+        console.log('Nicht genug Zellen markiert:', selectedCells.size);
+        return;
+    }
+    
+    saveState();
+    
+    // Erweitere selectedCells um alle zusammengeführten Zellen
+    // WICHTIG: Sammle auch die dateKeys von bereits entfernten Zellen
+    const expandedCells = new Set();
+    const expandedDateKeys = new Set(); // Speichere dateKeys für bereits entfernte Zellen
+    
+    selectedCells.forEach(cell => {
+        expandedCells.add(cell);
+        
+        // Füge dateKey hinzu, falls vorhanden
+        const dateKey = getDateKeyFromCell(cell);
+        if (dateKey) {
+            expandedDateKeys.add(dateKey);
+        }
+        
+        // Wenn diese Zelle Teil einer Zusammenführung ist, füge alle zusammengeführten Zellen hinzu
+        if (cell.hasAttribute('data-merged')) {
+            const mergedCellsStr = cell.getAttribute('data-merged-cells');
+            if (mergedCellsStr) {
+                try {
+                    const mergedCellIds = JSON.parse(mergedCellsStr);
+                    const row = cell.parentElement;
+                    
+                    // Füge alle dateKeys zur erweiterten Liste hinzu
+                    mergedCellIds.forEach(dateKey => {
+                        expandedDateKeys.add(dateKey);
+                        
+                        // Versuche, die Zelle im DOM zu finden
+                        const mergedCell = Array.from(row.children).find(c => {
+                            const cellDateKey = c.getAttribute('data-date');
+                            return cellDateKey === dateKey;
+                        });
+                        if (mergedCell) {
+                            expandedCells.add(mergedCell);
+                        }
+                    });
+                } catch (e) {
+                    console.error('Fehler beim Parsen von merged-cells:', e);
+                }
+            }
+        }
+        
+        // Wenn diese Zelle in eine Zusammenführung eingefügt ist, füge die Hauptzelle hinzu
+        if (cell.hasAttribute('data-merged-into')) {
+            const mergedIntoDateKey = cell.getAttribute('data-merged-into');
+            const row = cell.parentElement;
+            const mainCell = Array.from(row.children).find(c => {
+                const cellDateKey = c.getAttribute('data-date');
+                return cellDateKey === mergedIntoDateKey && c.hasAttribute('data-merged');
+            });
+            if (mainCell) {
+                expandedCells.add(mainCell);
+                expandedDateKeys.add(mergedIntoDateKey);
+                
+                // Füge auch alle anderen zusammengeführten Zellen hinzu
+                const mergedCellsStr = mainCell.getAttribute('data-merged-cells');
+                if (mergedCellsStr) {
+                    try {
+                        const mergedCellIds = JSON.parse(mergedCellsStr);
+                        mergedCellIds.forEach(dateKey => {
+                            expandedDateKeys.add(dateKey);
+                            
+                            const mergedCell = Array.from(row.children).find(c => {
+                                const cellDateKey = c.getAttribute('data-date');
+                                return cellDateKey === dateKey;
+                            });
+                            if (mergedCell) {
+                                expandedCells.add(mergedCell);
+                            }
+                        });
+                    } catch (e) {
+                        console.error('Fehler beim Parsen von merged-cells:', e);
+                    }
+                }
+            }
+        }
+    });
+    
+    // Finde alle Zellen im DOM, die zu den erweiterten dateKeys gehören
+    // Dies ist wichtig, um auch Zellen zu finden, die noch nicht zusammengeführt wurden
+    const allRows = document.querySelectorAll('tbody tr');
+    allRows.forEach(row => {
+        const employee = row.querySelector('td:first-child span')?.textContent;
+        if (!employee) return;
+        
+        expandedDateKeys.forEach(dateKey => {
+            // Prüfe, ob diese Zelle bereits in expandedCells ist
+            const alreadyIncluded = Array.from(expandedCells).some(cell => {
+                const cellDateKey = getDateKeyFromCell(cell);
+                return cellDateKey === dateKey;
+            });
+            
+            if (!alreadyIncluded) {
+                // Suche nach der Zelle im DOM
+                const cell = Array.from(row.children).find(c => {
+                    const cellDateKey = c.getAttribute('data-date');
+                    return cellDateKey === dateKey;
+                });
+                if (cell && !cell.hasAttribute('data-merged-placeholder')) {
+                    expandedCells.add(cell);
+                }
+            }
+        });
+    });
+    
+    // Sortiere Zellen nach Position (von links nach rechts)
+    const sortedCells = Array.from(expandedCells).sort((a, b) => {
+        const rowA = a.parentElement;
+        const rowB = b.parentElement;
+        if (rowA !== rowB) return 0; // Nur Zellen in derselben Zeile zusammenführen
+        const indexA = Array.from(rowA.children).indexOf(a);
+        const indexB = Array.from(rowB.children).indexOf(b);
+        return indexA - indexB;
+    });
+    
+    // Prüfe, ob alle Zellen zum selben Mitarbeiter gehören
+    // WICHTIG: Wenn zusammengeführte Zellen beteiligt sind, können einige Zellen bereits entfernt sein
+    // Prüfe daher basierend auf dem Mitarbeiter, nicht nur auf der Zeile
+    if (sortedCells.length === 0) {
+        alert('Keine Zellen zum Zusammenführen gefunden.');
+        return;
+    }
+    
+    // Finde den Mitarbeiter der ersten Zelle
+    const firstRow = sortedCells[0].parentElement;
+    const employee = firstRow.querySelector('td:first-child span')?.textContent;
+    
+    if (!employee) {
+        alert('Mitarbeiter nicht gefunden.');
+        return;
+    }
+    
+    // Prüfe, ob alle vorhandenen Zellen zum selben Mitarbeiter gehören
+    // WICHTIG: Wenn zusammengeführte Zellen beteiligt sind, können einige Zellen bereits entfernt sein
+    // Prüfe daher hauptsächlich basierend auf expandedDateKeys und employee
+    // Vereinfachte Prüfung: Wenn alle dateKeys zum selben Mitarbeiter gehören, ist es OK
+    let allSameEmployee = true;
+    if (sortedCells.length > 0) {
+        allSameEmployee = sortedCells.every(cell => {
+            const cellRow = cell.parentElement;
+            const cellEmployee = cellRow.querySelector('td:first-child span')?.textContent;
+            return cellEmployee === employee;
+        });
+    }
+    
+    // Wenn nicht alle Zellen zum selben Mitarbeiter gehören, prüfe ob es zusammengeführte Zellen sind
+    if (!allSameEmployee && sortedCells.length > 0) {
+        // Prüfe, ob es sich um zusammengeführte Zellen handelt
+        const hasMergedCells = sortedCells.some(cell => cell.hasAttribute('data-merged') || cell.hasAttribute('data-merged-into'));
+        
+        if (!hasMergedCells) {
+            // Wenn keine zusammengeführten Zellen beteiligt sind, muss die Prüfung strenger sein
+            console.log('Prüfung fehlgeschlagen:', { sortedCells: sortedCells.length, employee, allSameEmployee });
+            alert('Felder können nur innerhalb derselben Zeile zusammengeführt werden.');
+            return;
+        } else {
+            // Wenn zusammengeführte Zellen beteiligt sind, ist es OK
+            console.log('Zusammengeführte Zellen erkannt, Prüfung übersprungen');
+        }
+    }
+    
+    // Finde die Zeile des Mitarbeiters (wird später benötigt)
+    let referenceRow = firstRow;
+    // allRows wurde bereits oben deklariert, verwende es hier
+    for (const row of allRows) {
+        const rowEmployee = row.querySelector('td:first-child span')?.textContent;
+        if (rowEmployee === employee) {
+            // Prüfe, ob mindestens einer der dateKeys in dieser Zeile ist
+            const hasAnyDateKey = Array.from(expandedDateKeys).some(dateKey => {
+                const cell = Array.from(row.children).find(c => {
+                    const cellDateKey = c.getAttribute('data-date');
+                    return cellDateKey === dateKey;
+                });
+                return cell !== undefined;
+            });
+            if (hasAnyDateKey) {
+                referenceRow = row;
+                break;
+            }
+        }
+    }
+    
+    console.log('Zusammenführung erlaubt:', { employee, expandedDateKeys: Array.from(expandedDateKeys), sortedCells: sortedCells.length });
+    
+    // Entferne Duplikate und sortiere nach dateKey (nicht nach DOM-Position)
+    // WICHTIG: Verwende expandedDateKeys, um auch entfernte Zellen zu berücksichtigen
+    const uniqueCells = [];
+    const seenDateKeys = new Set();
+    
+    // Sortiere dateKeys chronologisch
+    const sortedDateKeys = Array.from(expandedDateKeys).sort((a, b) => {
+        const [yearA, monthA, dayA] = a.split('-').map(Number);
+        const [yearB, monthB, dayB] = b.split('-').map(Number);
+        const dateA = new Date(yearA, monthA - 1, dayA);
+        const dateB = new Date(yearB, monthB - 1, dayB);
+        return dateA - dateB;
+    });
+    
+    // Finde für jeden dateKey die entsprechende Zelle im DOM
+    sortedDateKeys.forEach(dateKey => {
+        if (seenDateKeys.has(dateKey)) return;
+        seenDateKeys.add(dateKey);
+        
+        // Suche die Zelle im DOM
+        const cell = sortedCells.find(c => {
+            const cellDateKey = getDateKeyFromCell(c);
+            return cellDateKey === dateKey;
+        });
+        
+        if (cell) {
+            uniqueCells.push(cell);
+        } else {
+            // Zelle ist nicht im DOM (wurde bereits entfernt)
+            // Das ist OK, wir verwenden nur die Zellen, die noch im DOM sind
+            // Die dateKeys werden trotzdem in mergedCellIds gespeichert
+        }
+    });
+    
+    // Wenn keine Zellen gefunden wurden, verwende sortedCells als Fallback
+    if (uniqueCells.length === 0) {
+        sortedCells.forEach(cell => {
+            const dateKey = getDateKeyFromCell(cell);
+            if (dateKey && !seenDateKeys.has(dateKey)) {
+                seenDateKeys.add(dateKey);
+                uniqueCells.push(cell);
+            }
+        });
+    }
+    
+    // Nimm die erste Zelle als Basis
+    // Wenn uniqueCells leer ist, verwende die erste Zelle aus sortedCells
+    let firstCell = uniqueCells.length > 0 ? uniqueCells[0] : sortedCells[0];
+    if (!firstCell) {
+        alert('Keine Zelle zum Zusammenführen gefunden.');
+        return;
+    }
+    
+    const row = firstCell.parentElement;
+    // employee wurde bereits oben deklariert, verwende es hier
+    if (!employee) {
+        alert('Mitarbeiter nicht gefunden.');
+        return;
+    }
+    
+    // Wenn firstCell kein dateKey hat, versuche es aus expandedDateKeys zu holen
+    let firstDateKey = getDateKeyFromCell(firstCell);
+    if (!firstDateKey && expandedDateKeys.size > 0) {
+        firstDateKey = Array.from(expandedDateKeys).sort((a, b) => {
+            const [yearA, monthA, dayA] = a.split('-').map(Number);
+            const [yearB, monthB, dayB] = b.split('-').map(Number);
+            const dateA = new Date(yearA, monthA - 1, dayA);
+            const dateB = new Date(yearB, monthB - 1, dayB);
+            return dateA - dateB;
+        })[0];
+        
+        // Versuche, die Zelle im DOM zu finden
+        const foundCell = Array.from(row.children).find(c => {
+            const cellDateKey = c.getAttribute('data-date');
+            return cellDateKey === firstDateKey;
+        });
+        if (foundCell) {
+            firstCell = foundCell;
+        }
+    }
+    
+    if (!firstDateKey) {
+        alert('Datum nicht gefunden.');
+        return;
+    }
+    
+    // Hole Inhalt aus der ersten Zelle
+    const firstNoteKey = `${employee}-${firstDateKey}`;
+    const firstLinkKey = `${employee}-${firstDateKey}-link`;
+    const firstAddressKey = `${employee}-${firstDateKey}-address`;
+    const firstAssignment = assignments[employee]?.[firstDateKey];
+    
+    let mergedText = cellNotes[firstNoteKey] || firstAssignment?.text || '';
+    let mergedStatus = firstAssignment?.status || null;
+    let mergedNote = cellNotes[firstNoteKey] || '';
+    let mergedLink = cellLinks[firstLinkKey] || '';
+    let mergedAddress = cellAddresses[firstAddressKey] || '';
+    
+    // Speichere Referenzen zu allen zusammengeführten Zellen
+    // Verwende expandedDateKeys, um auch bereits entfernte Zellen zu berücksichtigen
+    let mergedCellIds = Array.from(expandedDateKeys).sort((a, b) => {
+        const [yearA, monthA, dayA] = a.split('-').map(Number);
+        const [yearB, monthB, dayB] = b.split('-').map(Number);
+        const dateA = new Date(yearA, monthA - 1, dayA);
+        const dateB = new Date(yearB, monthB - 1, dayB);
+        return dateA - dateB;
+    });
+    
+    // Stelle sicher, dass die erste Zelle die erste in mergedCellIds ist
+    if (mergedCellIds.length > 0 && mergedCellIds[0] !== firstDateKey) {
+        const firstIndex = mergedCellIds.indexOf(firstDateKey);
+        if (firstIndex > 0) {
+            mergedCellIds.splice(firstIndex, 1);
+            mergedCellIds.unshift(firstDateKey);
+        } else if (firstIndex === -1) {
+            // firstDateKey ist nicht in mergedCellIds, füge es am Anfang hinzu
+            mergedCellIds.unshift(firstDateKey);
+        }
+    } else if (mergedCellIds.length === 0) {
+        // Fallback: Verwende firstDateKey
+        mergedCellIds = [firstDateKey];
+    }
+    
+    console.log('mergedCellIds vor Zusammenführung:', mergedCellIds, 'firstDateKey:', firstDateKey);
+    
+    // Verwende CSS-Positionierung statt colspan, um Tabellenstruktur zu erhalten
+    // spanCount basiert auf der Anzahl der dateKeys, nicht der Zellen im DOM
+    const spanCount = mergedCellIds.length;
+    
+    // Stelle sicher, dass spanCount mindestens 2 ist (sonst macht Zusammenführung keinen Sinn)
+    if (spanCount < 2) {
+        console.warn('spanCount ist kleiner als 2, Zusammenführung wird übersprungen:', { 
+            spanCount, 
+            mergedCellIds,
+            expandedDateKeys: Array.from(expandedDateKeys),
+            selectedCells: selectedCells.size
+        });
+        return;
+    }
+    
+    // Prüfe, ob sich die Zusammenführung geändert hat
+    // Wenn ein zusammengeführtes Feld markiert ist, prüfe ob es erweitert/verkleinert werden soll
+    const existingMergeKey = `${employee}-${firstDateKey}`;
+    const existingMerge = mergedCells[existingMergeKey];
+    if (existingMerge && existingMerge.mergedCells) {
+        const existingMergedCells = existingMerge.mergedCells;
+        const existingCount = existingMergedCells.length;
+        
+        // Sortiere beide Arrays für Vergleich
+        const sortedExisting = [...existingMergedCells].sort();
+        const sortedNew = [...mergedCellIds].sort();
+        
+        // Prüfe, ob die dateKeys unterschiedlich sind
+        const dateKeysChanged = JSON.stringify(sortedNew) !== JSON.stringify(sortedExisting);
+        
+        // Prüfe, ob sich die Anzahl geändert hat
+        const countChanged = spanCount !== existingCount;
+        
+        if (!dateKeysChanged && !countChanged) {
+            console.log('Zusammenführung unverändert, überspringe:', { 
+                spanCount, 
+                existingCount,
+                mergedCellIds: sortedNew,
+                existingMergedCells: sortedExisting
+            });
+            return;
+        }
+        
+        console.log('Zusammenführung wird geändert:', { 
+            spanCount, 
+            existingCount,
+            dateKeysChanged,
+            countChanged,
+            mergedCellIds: sortedNew,
+            existingMergedCells: sortedExisting,
+            expandedDateKeys: Array.from(expandedDateKeys)
+        });
+    } else {
+        console.log('Neue Zusammenführung wird erstellt:', { 
+            spanCount,
+            mergedCellIds,
+            expandedDateKeys: Array.from(expandedDateKeys)
+        });
+    }
+    
+    // Berechne die Gesamtbreite (alle Zellen zusammen)
+    // Warte kurz, damit die Zellen gerendert sind
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    // Berechne die Gesamtbreite aus allen Zellen
+    // Verwende die erste Zelle als Basis und multipliziere mit spanCount
+    // Das ist wichtig, da zusammengeführte Zellen bereits entfernt sein können
+    let totalWidth = 0;
+    if (firstCell && uniqueCells.length > 0) {
+        // Versuche, die Breite aus der ersten Zelle zu berechnen
+        const rect = firstCell.getBoundingClientRect();
+        const singleCellWidth = rect.width > 0 ? rect.width : (firstCell.offsetWidth || 100);
+        totalWidth = singleCellWidth * spanCount;
+    } else if (firstCell) {
+        // Fallback: Verwende offsetWidth der ersten Zelle
+        const singleCellWidth = firstCell.offsetWidth || 100;
+        totalWidth = singleCellWidth * spanCount;
+    } else {
+        // Fallback: Verwende Standardbreite
+        totalWidth = 100 * spanCount;
+    }
+    
+    console.log('Zusammenführung:', { 
+        spanCount, 
+        totalWidth, 
+        uniqueCells: uniqueCells.length, 
+        mergedCellIds: mergedCellIds.length,
+        expandedDateKeys: expandedDateKeys.size,
+        firstDateKey 
+    });
+    
+    // Verwende colspan - das ist das einzige, was in HTML-Tabellen funktioniert
+    // WICHTIG: colspan verschiebt die nachfolgenden Zellen, das ist das normale Verhalten
+    // Um die Wochenstruktur zu erhalten, müssen wir die Header-Zellen anpassen
+    firstCell.setAttribute('colspan', spanCount);
+    firstCell.setAttribute('data-merged', 'true');
+    firstCell.setAttribute('data-merged-cells', JSON.stringify(mergedCellIds));
+    
+    // Entferne die anderen Zellen aus dem DOM
+    // WICHTIG: Entferne alle Zellen, die in mergedCellIds sind, außer der ersten
+    const removedCells = [];
+    for (let i = 1; i < mergedCellIds.length; i++) {
+        const dateKey = mergedCellIds[i];
+        
+        // Finde die Zelle im DOM
+        const cell = Array.from(row.children).find(c => {
+            const cellDateKey = c.getAttribute('data-date');
+            return cellDateKey === dateKey && !c.hasAttribute('data-merged');
+        });
+        
+        if (cell) {
+            // Entferne alle Daten aus den anderen Zellen
+            const noteKey = `${employee}-${dateKey}`;
+            const linkKey = `${employee}-${dateKey}-link`;
+            const addressKey = `${employee}-${dateKey}-address`;
+            
+            delete cellNotes[noteKey];
+            delete cellLinks[linkKey];
+            delete cellAddresses[addressKey];
+            if (assignments[employee]) {
+                delete assignments[employee][dateKey];
+            }
+            
+            removedCells.push({ dateKey, cell });
+            cell.remove();
+        } else {
+            // Zelle wurde bereits entfernt (z.B. bei vorheriger Zusammenführung)
+            // Füge sie trotzdem zu removedCells hinzu
+            removedCells.push({ dateKey, cell: null });
+        }
+    }
+    
+    // Speichere die entfernten Zellen
+    firstCell.setAttribute('data-merged-hidden-cells', JSON.stringify(removedCells.map(c => c.dateKey)));
+    
+    // Speichere die Zusammenführung in mergedCells
+    const mergeKey = `${employee}-${firstDateKey}`;
+    mergedCells[mergeKey] = {
+        mergedCells: mergedCellIds,
+        removedCells: removedCells.map(c => c.dateKey)
+    };
+    console.log('mergedCells gespeichert:', mergedCells, 'mergeKey:', mergeKey);
+    await saveData('mergedCells', mergedCells);
+    
+    // Setze den Inhalt nur in der ersten Zelle
+    if (mergedStatus) {
+        if (!assignments[employee]) {
+            assignments[employee] = {};
+        }
+        assignments[employee][firstDateKey] = {
+            text: mergedText,
+            status: mergedStatus
+        };
+    } else if (mergedText) {
+        if (!assignments[employee]) {
+            assignments[employee] = {};
+        }
+        assignments[employee][firstDateKey] = {
+            text: mergedText
+        };
+    }
+    
+    if (mergedNote || mergedLink || mergedAddress) {
+        cellNotes[firstNoteKey] = mergedNote;
+        cellLinks[firstLinkKey] = mergedLink;
+        cellAddresses[firstAddressKey] = mergedAddress;
+    }
+    
+    // Aktualisiere die erste Zelle (aber behalte colspan)
+    const savedColspan = firstCell.getAttribute('colspan');
+    updateCell(firstCell, employee, firstDateKey);
+    
+    // Stelle sicher, dass colspan erhalten bleibt
+    if (firstCell.hasAttribute('data-merged') && savedColspan) {
+        firstCell.setAttribute('colspan', savedColspan);
+    }
+    
+    await saveData('assignments', assignments);
+    await saveData('cellNotes', cellNotes);
+    await saveData('cellLinks', cellLinks);
+    await saveData('cellAddresses', cellAddresses);
+    
+    clearSelection();
+}
+
+// Funktion zum Hinzufügen von Event-Listenern für Platzhalter-Zellen
+function setupPlaceholderEventListeners(placeholder, employee, dateKey) {
+    // Klick-Event für Platzhalter
+    placeholder.addEventListener('click', (e) => {
+        const mergedIntoDateKey = placeholder.getAttribute('data-merged-into');
+        if (mergedIntoDateKey) {
+            const row = placeholder.parentElement;
+            const allCells = Array.from(row.children);
+            const firstCell = allCells.find(c => {
+                const cellDateKey = getDateKeyFromCell(c);
+                return cellDateKey === mergedIntoDateKey && c.hasAttribute('data-merged');
+            });
+            if (firstCell) {
+                unmergeCellIfNeeded(firstCell, employee, dateKey);
+            }
+        }
+    });
+    
+    // Doppelklick-Event
+    placeholder.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        const mergedIntoDateKey = placeholder.getAttribute('data-merged-into');
+        if (mergedIntoDateKey) {
+            const row = placeholder.parentElement;
+            const allCells = Array.from(row.children);
+            const firstCell = allCells.find(c => {
+                const cellDateKey = getDateKeyFromCell(c);
+                return cellDateKey === mergedIntoDateKey && c.hasAttribute('data-merged');
+            });
+            if (firstCell) {
+                unmergeCellIfNeeded(firstCell, employee, dateKey);
+                setTimeout(() => {
+                    const foundCell = allCells.find(c => {
+                        const cellDateKey = getDateKeyFromCell(c);
+                        return cellDateKey === dateKey;
+                    });
+                    if (foundCell) {
+                        showInfoField(foundCell, employee, dateKey);
+                    }
+                }, 100);
+            }
+        }
+    });
+    
+    // Mousedown für Auswahl
+    placeholder.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        if (!isSelecting) {
+            clearSelection();
+        }
+        isSelecting = true;
+        lastSelectedCell = placeholder;
+        toggleCellSelection(placeholder);
+    });
+    
+    // Mouseover für Drag-Auswahl
+    placeholder.addEventListener('mouseover', (e) => {
+        if (isSelecting && lastSelectedCell) {
+            selectCellsBetween(lastSelectedCell, placeholder);
+        }
+    });
+}
+
+// Funktion zum Auflösen der Zusammenführung bei Bearbeitung
+function unmergeCellIfNeeded(cell, employee, dateKey) {
+    // Prüfe, ob diese Zelle Teil einer Zusammenführung ist
+    if (cell.hasAttribute('data-merged-into')) {
+        const mergedIntoDateKey = cell.getAttribute('data-merged-into');
+        const row = cell.parentElement;
+        const allCells = Array.from(row.children);
+        const firstCell = allCells.find(c => {
+            const cellDateKey = getDateKeyFromCell(c);
+            return cellDateKey === mergedIntoDateKey && c.hasAttribute('data-merged');
+        });
+        
+        if (firstCell) {
+            const mergedCellsStr = firstCell.getAttribute('data-merged-cells');
+            if (mergedCellsStr) {
+                try {
+                    const mergedCellIds = JSON.parse(mergedCellsStr);
+                    const currentIndex = mergedCellIds.indexOf(dateKey);
+                    
+                    if (currentIndex > 0) {
+                        // Reduziere die Zusammenführung: nur noch bis zur aktuellen Zelle
+                        if (currentIndex > 1) {
+                            const newMergedCells = mergedCellIds.slice(0, currentIndex);
+                            firstCell.setAttribute('colspan', currentIndex);
+                            firstCell.setAttribute('data-merged-cells', JSON.stringify(newMergedCells));
+                            
+                            // Mache die Platzhalter-Zellen ab currentIndex wieder sichtbar
+                            const hiddenCellsStr = firstCell.getAttribute('data-merged-hidden-cells');
+                            if (hiddenCellsStr) {
+                                try {
+                                    const hiddenCells = JSON.parse(hiddenCellsStr);
+                                    const cellsToShow = hiddenCells.slice(currentIndex - 1);
+                                    
+                                    cellsToShow.forEach((dateKey) => {
+                                        const placeholder = allCells.find(c => 
+                                            c.getAttribute('data-merged-datekey') === dateKey && 
+                                            c.hasAttribute('data-merged-placeholder')
+                                        );
+                                        if (placeholder) {
+                                            placeholder.style.display = '';
+                                            placeholder.removeAttribute('data-merged-placeholder');
+                                            placeholder.removeAttribute('data-merged-into');
+                                            placeholder.removeAttribute('data-merged-datekey');
+                                        }
+                                    });
+                                    
+                                    firstCell.setAttribute('data-merged-hidden-cells', JSON.stringify(hiddenCells.slice(0, currentIndex - 1)));
+                                    
+                                    const mergeKey = `${employee}-${mergedIntoDateKey}`;
+                                    if (mergedCells[mergeKey]) {
+                                        mergedCells[mergeKey].mergedCells = newMergedCells;
+                                        mergedCells[mergeKey].removedCells = hiddenCells.slice(0, currentIndex - 1);
+                                        saveData('mergedCells', mergedCells);
+                                    }
+                                } catch (e) {
+                                    console.error('Fehler beim Wiederherstellen der Zellen:', e);
+                                }
+                            }
+                            
+                            const savedColspan = firstCell.getAttribute('colspan');
+                            updateCell(firstCell, employee, mergedIntoDateKey);
+                            if (savedColspan) {
+                                firstCell.setAttribute('colspan', savedColspan);
+                            }
+                        } else {
+                            // Nur noch eine Zelle, Zusammenführung komplett auflösen
+                            firstCell.removeAttribute('colspan');
+                            firstCell.removeAttribute('data-merged');
+                            firstCell.removeAttribute('data-merged-cells');
+                            
+                            const mergeKey = `${employee}-${mergedIntoDateKey}`;
+                            delete mergedCells[mergeKey];
+                            saveData('mergedCells', mergedCells);
+                            
+                            // Mache alle Platzhalter-Zellen wieder sichtbar
+                            const hiddenCellsStr = firstCell.getAttribute('data-merged-hidden-cells');
+                            if (hiddenCellsStr) {
+                                try {
+                                    const hiddenCells = JSON.parse(hiddenCellsStr);
+                                    
+                                    hiddenCells.forEach((dateKey) => {
+                                        const placeholder = allCells.find(c => 
+                                            c.getAttribute('data-merged-datekey') === dateKey && 
+                                            c.hasAttribute('data-merged-placeholder')
+                                        );
+                                        if (placeholder) {
+                                            placeholder.style.display = '';
+                                            placeholder.removeAttribute('data-merged-placeholder');
+                                            placeholder.removeAttribute('data-merged-into');
+                                            placeholder.removeAttribute('data-merged-datekey');
+                                        }
+                                    });
+                                    
+                                    firstCell.removeAttribute('data-merged-hidden-cells');
+                                } catch (e) {
+                                    console.error('Fehler beim Wiederherstellen der Zellen:', e);
+                                }
+                            }
+                            
+                            updateCell(firstCell, employee, mergedIntoDateKey);
+                        }
+                    }
+                } catch (err) {
+                    console.error('Fehler beim Auflösen der Zusammenführung:', err);
+                }
+            }
+        }
+    }
+}
 
 // Event Listener für den "Auswahl löschen" Button
 document.getElementById('clearSelection').addEventListener('click', async () => {
@@ -2683,4 +3963,264 @@ document.getElementById('clearSelection').addEventListener('click', async () => 
         // Lösche die Auswahl
         clearSelection();
     }
-}); 
+});
+
+// Mobile Kontextmenü für Long-Press
+function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
+    // Entferne vorhandenes Kontextmenü
+    const existingMenu = document.getElementById('mobileContextMenu');
+    if (existingMenu) {
+        existingMenu.remove();
+    }
+    
+    // Erstelle Kontextmenü
+    const menu = document.createElement('div');
+    menu.id = 'mobileContextMenu';
+    menu.style.cssText = `
+        position: fixed;
+        left: ${touchEvent.clientX}px;
+        top: ${touchEvent.clientY}px;
+        background: white;
+        border: 2px solid #333;
+        border-radius: 5px;
+        padding: 10px;
+        z-index: 10000;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    `;
+    
+    // Kopieren-Button
+    const copyBtn = document.createElement('button');
+    copyBtn.textContent = 'Kopieren';
+    copyBtn.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 5px 0; background: #007bff; color: white; border: none; border-radius: 3px;';
+    copyBtn.addEventListener('click', () => {
+        const noteKey = `${employee}-${dateKey}`;
+        const linkKey = `${employee}-${dateKey}-link`;
+        const addressKey = `${employee}-${dateKey}-address`;
+        const assignment = assignments[employee]?.[dateKey];
+        
+        let status = assignment?.status || null;
+        if (!status) {
+            const statusClass = Array.from(cell.classList).find(cls => cls.startsWith('status-'));
+            if (statusClass) {
+                status = statusClass.replace('status-', '');
+            }
+        }
+        
+        copiedContent = {
+            text: cell.querySelector('.cell-text')?.textContent || '',
+            status: status,
+            note: cellNotes[noteKey] || '',
+            link: cellLinks[linkKey] || '',
+            address: cellAddresses[addressKey] || ''
+        };
+        menu.remove();
+    });
+    
+    // Einfügen-Button
+    const pasteBtn = document.createElement('button');
+    pasteBtn.textContent = 'Einfügen';
+    pasteBtn.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 5px 0; background: #28a745; color: white; border: none; border-radius: 3px;';
+    pasteBtn.disabled = !copiedContent;
+    if (!copiedContent) {
+        pasteBtn.style.opacity = '0.5';
+    }
+    pasteBtn.addEventListener('click', async () => {
+        if (copiedContent) {
+            await pasteContentToCell(cell, employee, dateKey);
+        }
+        menu.remove();
+    });
+    
+    // Schließen-Button
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = 'Schließen';
+    closeBtn.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 5px 0; background: #6c757d; color: white; border: none; border-radius: 3px;';
+    closeBtn.addEventListener('click', () => {
+        menu.remove();
+    });
+    
+    menu.appendChild(copyBtn);
+    menu.appendChild(pasteBtn);
+    
+    // Prüfe, ob mehrere Zellen markiert sind oder ein zusammengeführtes Feld
+    const hasMergedCell = selectedCells.size > 0 && Array.from(selectedCells).some(c => 
+        c.hasAttribute('data-merged') || c.hasAttribute('data-merged-into')
+    );
+    const allMergedCells = selectedCells.size > 0 && Array.from(selectedCells).every(c => 
+        c.hasAttribute('data-merged') || c.hasAttribute('data-merged-into')
+    );
+    
+    // Zusammenführen-Button (wenn mehrere Zellen markiert sind ODER ein zusammengeführtes Feld + weitere Zellen)
+    if (selectedCells.size > 1 || (hasMergedCell && !allMergedCells)) {
+        const mergeBtn = document.createElement('button');
+        mergeBtn.textContent = 'Zusammenführen';
+        mergeBtn.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 5px 0; background: #28a745; color: white; border: none; border-radius: 3px;';
+        mergeBtn.addEventListener('click', async () => {
+            await mergeSelectedCells();
+            menu.remove();
+        });
+        menu.appendChild(mergeBtn);
+    }
+    
+    // Aufteilen-Button (wenn nur zusammengeführte Felder markiert sind)
+    if (allMergedCells && selectedCells.size > 0) {
+        const unmergeBtn = document.createElement('button');
+        unmergeBtn.textContent = 'Aufteilen';
+        unmergeBtn.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 5px 0; background: #dc3545; color: white; border: none; border-radius: 3px;';
+        unmergeBtn.addEventListener('click', async () => {
+            await unmergeSelectedCells();
+            menu.remove();
+        });
+        menu.appendChild(unmergeBtn);
+    }
+    
+    menu.appendChild(closeBtn);
+    
+    document.body.appendChild(menu);
+    
+    // Schließe beim Klick außerhalb
+    setTimeout(() => {
+        const closeOnClick = (e) => {
+            if (!menu.contains(e.target)) {
+                menu.remove();
+                document.removeEventListener('click', closeOnClick);
+                document.removeEventListener('touchstart', closeOnClick);
+            }
+        };
+        document.addEventListener('click', closeOnClick);
+        document.addEventListener('touchstart', closeOnClick);
+    }, 100);
+}
+
+// Funktion zum Einfügen von Inhalt in eine Zelle (für Mobile)
+async function pasteContentToCell(cell, employee, dateKey) {
+    if (!copiedContent) return;
+    
+    saveState();
+    
+    const noteKey = `${employee}-${dateKey}`;
+    const linkKey = `${employee}-${dateKey}-link`;
+    const addressKey = `${employee}-${dateKey}-address`;
+    
+    // Entferne colspan sofort
+    cell.removeAttribute('colspan');
+    cell.style.width = '';
+    cell.style.position = '';
+    cell.style.zIndex = '';
+    
+    // Setze Text und Status
+    if (copiedContent.text || copiedContent.status) {
+        if (!assignments[employee]) {
+            assignments[employee] = {};
+        }
+        if (copiedContent.status) {
+            assignments[employee][dateKey] = {
+                text: copiedContent.text || '',
+                status: copiedContent.status
+            };
+        } else {
+            assignments[employee][dateKey] = {
+                text: copiedContent.text || ''
+            };
+        }
+        cell.className = 'calendar-cell';
+        if (copiedContent.status) {
+            cell.classList.add(copiedContent.status);
+        }
+    }
+    
+    // Setze Notiz, Link und Adresse
+    if (copiedContent.note || copiedContent.link || copiedContent.address) {
+        cellNotes[noteKey] = copiedContent.note;
+        cellLinks[linkKey] = copiedContent.link;
+        cellAddresses[addressKey] = copiedContent.address;
+        cell.setAttribute('data-info', copiedContent.note);
+    } else {
+        delete cellNotes[noteKey];
+        delete cellLinks[linkKey];
+        delete cellAddresses[addressKey];
+        cell.removeAttribute('data-info');
+    }
+    
+    // Setze Hintergrundfarbe
+    const statusColors = {
+        'urlaub': '#28a745',
+        'krank': '#dc3545',
+        'unbezahlt': '#ffc107',
+        'schulung': '#6f42c1',
+        'feiertag': '#17a2b8',
+        'kurzarbeit': '#795548',
+        'abgerechnet': '#e8f5e9'
+    };
+    
+    if (copiedContent.status) {
+        const bgColor = statusColors[copiedContent.status];
+        cell.style.backgroundColor = bgColor;
+        if (bgColor === '#e8f5e9' || bgColor === '#ffc107' || bgColor === '') {
+            cell.style.color = 'black';
+        } else {
+            cell.style.color = 'white';
+        }
+    } else {
+        cell.style.backgroundColor = '';
+        cell.style.color = 'black';
+    }
+    
+    updateCell(cell, employee, dateKey);
+    
+    await saveData('assignments', assignments);
+    await saveData('cellNotes', cellNotes);
+    await saveData('cellLinks', cellLinks);
+    await saveData('cellAddresses', cellAddresses);
+}
+
+// Auto-Refresh Funktionen
+let autoRefreshInterval = null;
+let isUserEditing = false;
+
+function startAutoRefresh() {
+    if (autoRefreshInterval) return; // Bereits aktiv
+    
+    autoRefreshInterval = setInterval(async () => {
+        if (!isUserEditing && window.firebaseDB) {
+            try {
+                const data = await window.firebaseDB.loadAllData();
+                if (data) {
+                    // Aktualisiere nur, wenn sich Daten geändert haben
+                    const currentDataHash = JSON.stringify({
+                        employees: employees,
+                        assignments: assignments,
+                        cellNotes: cellNotes
+                    });
+                    const newDataHash = JSON.stringify({
+                        employees: data.employees,
+                        assignments: data.assignments,
+                        cellNotes: data.cellNotes
+                    });
+                    
+                    if (currentDataHash !== newDataHash) {
+                        employees = data.employees || employees;
+                        assignments = data.assignments || assignments;
+                        employeeStartDates = data.employeeStartDates || employeeStartDates;
+                        employeeEndDates = data.employeeEndDates || employeeEndDates;
+                        cellNotes = data.cellNotes || cellNotes;
+                        cellLinks = data.cellLinks || cellLinks;
+                        cellAddresses = data.cellAddresses || cellAddresses;
+                        mergedCells = data.mergedCells || mergedCells;
+                        
+                        updateCalendar();
+                    }
+                }
+            } catch (error) {
+                console.error('Fehler beim Auto-Refresh:', error);
+            }
+        }
+    }, 10000); // Alle 10 Sekunden
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+    }
+} 

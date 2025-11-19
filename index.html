@@ -87,6 +87,7 @@
             <button id="exportData">Daten exportieren</button>
             <input type="file" id="importData" accept=".json" style="display: none;">
             <button id="importDataBtn">Daten importieren</button>
+            <button id="showEvaluation">Auswertung</button>
             <button id="showAuditLog">Änderungsprotokoll</button>
         </div>
     </div>
@@ -108,6 +109,24 @@
             <p>Möchten Sie den Mitarbeiter <span id="employeeToDelete"></span> wirklich entfernen?</p>
             <button id="confirmDelete">Ja</button>
             <button id="cancelDelete">Nein</button>
+        </div>
+    </div>
+
+    <!-- Modal für Auswertung -->
+    <div id="evaluationModal" class="modal">
+        <div class="modal-content" style="max-width: 90%; max-height: 90vh; overflow: auto;">
+            <button id="closeEvaluation" class="close-button-x">×</button>
+            <h2>Auswertung</h2>
+            <div style="margin: 20px 0;">
+                <label for="evaluationYear">Jahr auswählen:</label>
+                <select id="evaluationYear" style="padding: 5px; margin-left: 10px;">
+                    <!-- Wird dynamisch gefüllt -->
+                </select>
+                <button id="generateEvaluation" style="margin-left: 10px; padding: 5px 15px;">Auswertung generieren</button>
+            </div>
+            <div id="evaluationTable" style="margin-top: 20px;">
+                <!-- Tabelle wird hier eingefügt -->
+            </div>
         </div>
     </div>
 
