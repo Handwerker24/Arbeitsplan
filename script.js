@@ -12,8 +12,15 @@ let cellLinks = {};
 let copiedContent = null; // Speichert den kopierten Inhalt
 let isZoomedOut = false;
 let cellAddresses = {};
+let cellHighlights = {}; // Nur visuelle Farbmarkierungen pro Feld
 let isWeekView = false; // Neue Variable für den Ansichtsmodus
 let mergedCells = {}; // Speichert Zusammenführungen: { "employee-dateKey": { mergedCells: [...], removedCells: [...] } }
+// Globale Referenzen / Einstellungen für Farbmarkierung (werden gespeichert)
+let selectedHighlightColor = '#fff176'; // Standard-Hervorhebungsfarbe
+let selectedHighlightOpacity = 0.4;     // Standard-Deckkraft
+// Auto-Refresh / Bearbeitungsstatus
+let autoRefreshInterval = null;
+let isUserEditing = false;
 // firebaseDB wird in firebase-simple.js deklariert
 
 // Undo-Funktionalität
@@ -64,52 +71,68 @@ async function initializeFirebase() {
         // Lade alle Daten aus Firebase
         try {
             const data = await window.firebaseDB.loadAllData();
-            console.log('Rohdaten aus Firebase:', data);
+            console.log('[initializeFirebase] Rohdaten aus Firebase:', data);
             
-            // Überschreibe IMMER mit Daten aus Firebase (auch wenn leer)
-            // Firebase hat Vorrang vor localStorage
-            employees = data.employees || [];
-            assignments = data.assignments || {};
-            employeeStartDates = data.employeeStartDates || {};
-            employeeEndDates = data.employeeEndDates || {};
-            cellNotes = data.cellNotes || {};
-            cellLinks = data.cellLinks || {};
-            cellAddresses = data.cellAddresses || {};
-            mergedCells = data.mergedCells || {};
+            // Lade Daten aus Firebase
+            const fbEmployees = data.employees || [];
+            const fbAssignments = data.assignments || {};
+            const fbStartDates = data.employeeStartDates || {};
+            const fbEndDates = data.employeeEndDates || {};
+            const fbNotes = data.cellNotes || {};
+            const fbLinks = data.cellLinks || {};
+            const fbAddresses = data.cellAddresses || {};
+            const fbHighlights = data.cellHighlights || {};
+            const fbMerged = data.mergedCells || {};
             
-            console.log('Daten aus Firebase geladen (Firebase hat Vorrang):', { 
+            // Lade Daten aus localStorage (als Backup)
+            const lsEmployees = JSON.parse(localStorage.getItem('employees') || 'null');
+            const lsAssignments = JSON.parse(localStorage.getItem('assignments') || 'null');
+            const lsStartDates = JSON.parse(localStorage.getItem('employeeStartDates') || 'null');
+            const lsEndDates = JSON.parse(localStorage.getItem('employeeEndDates') || 'null');
+            const lsNotes = JSON.parse(localStorage.getItem('cellNotes') || 'null');
+            const lsLinks = JSON.parse(localStorage.getItem('cellLinks') || 'null');
+            const lsAddresses = JSON.parse(localStorage.getItem('cellAddresses') || 'null');
+            const lsHighlights = JSON.parse(localStorage.getItem('cellHighlights') || 'null');
+            const lsMerged = JSON.parse(localStorage.getItem('mergedCells') || 'null');
+            
+            // Verwende Firebase-Daten, FALLS vorhanden, sonst localStorage
+            // Wenn Firebase leer ist, aber localStorage Daten hat, verwende localStorage
+            employees = (fbEmployees && fbEmployees.length > 0) ? fbEmployees : (lsEmployees || []);
+            assignments = (fbAssignments && Object.keys(fbAssignments).length > 0) ? fbAssignments : (lsAssignments || {});
+            employeeStartDates = (fbStartDates && Object.keys(fbStartDates).length > 0) ? fbStartDates : (lsStartDates || {});
+            employeeEndDates = (fbEndDates && Object.keys(fbEndDates).length > 0) ? fbEndDates : (lsEndDates || {});
+            cellNotes = (fbNotes && Object.keys(fbNotes).length > 0) ? fbNotes : (lsNotes || {});
+            cellLinks = (fbLinks && Object.keys(fbLinks).length > 0) ? fbLinks : (lsLinks || {});
+            cellAddresses = (fbAddresses && Object.keys(fbAddresses).length > 0) ? fbAddresses : (lsAddresses || {});
+            cellHighlights = (fbHighlights && Object.keys(fbHighlights).length > 0) ? fbHighlights : (lsHighlights || {});
+            mergedCells = (fbMerged && Object.keys(fbMerged).length > 0) ? fbMerged : (lsMerged || {});
+            
+            console.log('[initializeFirebase] Finale Daten geladen:', { 
                 employees: employees.length, 
                 assignments: Object.keys(assignments).length,
                 employeeStartDates: Object.keys(employeeStartDates).length,
                 employeeEndDates: Object.keys(employeeEndDates).length,
                 cellNotes: Object.keys(cellNotes).length,
                 cellLinks: Object.keys(cellLinks).length,
-                cellAddresses: Object.keys(cellAddresses).length
+                cellAddresses: Object.keys(cellAddresses).length,
+                cellHighlights: Object.keys(cellHighlights).length
             });
             
-            // Wenn Firebase leer ist, migriere Daten aus localStorage zu Firebase
-            if (employees.length === 0 && Object.keys(assignments).length === 0) {
-                console.log('Firebase ist leer, prüfe localStorage für Migration...');
-                const localEmployees = JSON.parse(localStorage.getItem('employees')) || [];
-                const localAssignments = JSON.parse(localStorage.getItem('assignments')) || {};
-                
-                if (localEmployees.length > 0 || Object.keys(localAssignments).length > 0) {
-                    console.log('Daten in localStorage gefunden, migriere zu Firebase...');
-                    // Lade aus localStorage
-                    loadDataFromLocalStorage();
-                    // Speichere dann in Firebase
-                    saveData('employees', employees);
-                    saveData('assignments', assignments);
-                    saveData('employeeStartDates', employeeStartDates);
-                    saveData('employeeEndDates', employeeEndDates);
-                    saveData('cellNotes', cellNotes);
-                    saveData('cellLinks', cellLinks);
-                    saveData('cellAddresses', cellAddresses);
-                    saveData('mergedCells', mergedCells);
-                    console.log('Daten von localStorage zu Firebase migriert');
-                } else {
-                    console.log('Auch localStorage ist leer, starte mit leeren Daten');
-                }
+            // Wenn Firebase leer ist, aber localStorage Daten hat, versuche diese zu Firebase zu migrieren
+            if ((fbEmployees.length === 0 && Object.keys(fbAssignments).length === 0) && 
+                ((lsEmployees && lsEmployees.length > 0) || (lsAssignments && Object.keys(lsAssignments).length > 0))) {
+                console.log('[initializeFirebase] Firebase leer, aber localStorage hat Daten - versuche Migration zu Firebase...');
+                // Speichere die geladenen Daten (aus localStorage) in Firebase
+                await saveData('employees', employees);
+                await saveData('assignments', assignments);
+                await saveData('employeeStartDates', employeeStartDates);
+                await saveData('employeeEndDates', employeeEndDates);
+                await saveData('cellNotes', cellNotes);
+                await saveData('cellLinks', cellLinks);
+                await saveData('cellAddresses', cellAddresses);
+                await saveData('cellHighlights', cellHighlights);
+                await saveData('mergedCells', mergedCells);
+                console.log('[initializeFirebase] Migration zu Firebase abgeschlossen');
             }
         } catch (error) {
             console.error('Fehler beim Laden aus Firebase:', error);
@@ -131,21 +154,34 @@ function loadDataFromLocalStorage() {
     cellNotes = JSON.parse(localStorage.getItem('cellNotes')) || {};
     cellLinks = JSON.parse(localStorage.getItem('cellLinks')) || {};
     cellAddresses = JSON.parse(localStorage.getItem('cellAddresses')) || {};
+    cellHighlights = JSON.parse(localStorage.getItem('cellHighlights')) || {};
     mergedCells = JSON.parse(localStorage.getItem('mergedCells')) || {};
     console.log('Daten aus localStorage geladen');
 }
 
 // Daten speichern (Firebase oder localStorage)
 async function saveData(key, data) {
+    console.log(`[saveData] Starte Speichern von ${key}...`);
     // Setze Flag, dass Benutzer gerade bearbeitet
     isUserEditing = true;
     
+    // IMMER zuerst in localStorage speichern (als Backup)
+    try {
+        localStorage.setItem(key, JSON.stringify(data));
+        console.log(`[saveData] ${key} in localStorage gespeichert`);
+    } catch (lsError) {
+        console.error(`[saveData] Fehler beim Speichern in localStorage:`, lsError);
+    }
+    
+    // Dann versuchen, in Firebase zu speichern
     try {
         const db = window.firebaseDB || firebaseDB;
         if (db) {
+            console.log(`[saveData] Versuche ${key} in Firebase zu speichern...`);
             await db.saveData(key, data);
+            console.log(`[saveData] ${key} erfolgreich in Firebase gespeichert`);
         } else {
-            localStorage.setItem(key, JSON.stringify(data));
+            console.warn(`[saveData] Firebase DB nicht verfügbar, nur localStorage verwendet`);
         }
         
         // Setze Flag nach 2 Sekunden zurück
@@ -153,10 +189,10 @@ async function saveData(key, data) {
             isUserEditing = false;
         }, 2000);
     } catch (error) {
-        console.error(`Fehler beim Speichern von ${key}:`, error);
+        console.error(`[saveData] Fehler beim Speichern von ${key} in Firebase:`, error);
+        console.log(`[saveData] ${key} wurde in localStorage gespeichert (Fallback)`);
         isUserEditing = false;
-        // Fallback zu localStorage
-        localStorage.setItem(key, JSON.stringify(data));
+        // localStorage wurde bereits oben gespeichert
     }
 }
 
@@ -229,7 +265,8 @@ function saveState() {
         assignments: JSON.parse(JSON.stringify(assignments)),
         cellNotes: JSON.parse(JSON.stringify(cellNotes)),
         cellLinks: JSON.parse(JSON.stringify(cellLinks)),
-        cellAddresses: JSON.parse(JSON.stringify(cellAddresses))
+        cellAddresses: JSON.parse(JSON.stringify(cellAddresses)),
+        cellHighlights: JSON.parse(JSON.stringify(cellHighlights))
     };
     
     undoStack.push(state);
@@ -462,10 +499,21 @@ document.addEventListener('keydown', async (e) => {
             
             const noteKey = `${employee}-${dateKey}`;
             const linkKey = `${employee}-${dateKey}-link`;
+            const addressKey = `${employee}-${dateKey}-address`;
+            const highlightKey = `${employee}-${dateKey}`;
             
-            // Lösche Notiz und Link
+            // Merke aktuellen Text für das Audit-Log, bevor wir Daten löschen
+            const deletedText =
+                cellNotes[noteKey] ||
+                cellAddresses[addressKey] ||
+                assignments[employee]?.[dateKey]?.text ||
+                '';
+
+            // Lösche Notiz, Link, Adresse und Farbmarkierung
             delete cellNotes[noteKey];
             delete cellLinks[linkKey];
+            delete cellAddresses[addressKey];
+            delete cellHighlights[highlightKey];
             cell.removeAttribute('data-info');
             
             // Lösche Zuweisung
@@ -478,9 +526,16 @@ document.addEventListener('keydown', async (e) => {
             cell.className = 'calendar-cell';
             cell.style.backgroundColor = '';
             cell.style.color = '';
-            cell.classList.remove('status-urlaub', 'status-krank', 'status-unbezahlt', 
-                'status-schulung', 'status-feiertag', 'status-kurzarbeit', 
-                'status-abgerechnet', 'status-ueberstunden');
+            cell.classList.remove(
+                'status-urlaub',
+                'status-krank',
+                'status-unbezahlt',
+                'status-schulung',
+                'status-feiertag',
+                'status-kurzarbeit',
+                'status-abgerechnet',
+                'status-ueberstunden'
+            );
             
             // Prüfe Wochenende basierend auf dem tatsächlichen Datum
             const [year, month, day] = dateKey.split('-').map(Number);
@@ -489,17 +544,19 @@ document.addEventListener('keydown', async (e) => {
                 cell.classList.add('weekend-cell');
             }
             
-            // Logge die Löschung (vor dem Löschen, damit wir den Text noch haben)
-            const deletedText = cellNotes[noteKey] || assignments[employee]?.[dateKey]?.text || '';
+            // Logge die Löschung
+            const deletedTextForLog = deletedText;
             addToAuditLog('Eintrag gelöscht', { 
                 employee: employee, 
                 date: dateKey,
-                deletedText: deletedText
+                deletedText: deletedTextForLog
             });
         });
         
         await saveData('cellNotes', cellNotes);
         await saveData('cellLinks', cellLinks);
+        await saveData('cellAddresses', cellAddresses);
+        await saveData('cellHighlights', cellHighlights);
         await saveData('assignments', assignments);
     }
     
@@ -686,6 +743,13 @@ async function initializeApp() {
     infoField = document.getElementById('infoField');
     infoText = document.getElementById('infoText');
     zoomOutButton = document.getElementById('zoomOut');
+
+    // Elemente für Farbmarkierung (Palette)
+    const applyHighlightButton = document.getElementById('applyHighlight');
+    const clearHighlightButton = document.getElementById('clearHighlight');
+    const colorSwatches = document.querySelectorAll('.highlight-color-swatch');
+    const highlightOpacityInput = document.getElementById('highlightOpacity');
+    const highlightOpacityValue = document.getElementById('highlightOpacityValue');
     
     console.log('Mitarbeiter:', employees);
     console.log('DOM-Elemente:', { yearGrid: !!yearGrid, monthGrid: !!monthGrid });
@@ -697,6 +761,59 @@ async function initializeApp() {
         updateCalendar();
         setupInfoFieldListeners();
         setupEventListeners();
+
+        // Event Listener für Farbmarkierung
+        if (applyHighlightButton) {
+            applyHighlightButton.addEventListener('click', () => {
+                applyHighlightToSelectedCells();
+            });
+        }
+        if (clearHighlightButton) {
+            clearHighlightButton.addEventListener('click', () => {
+                clearHighlightsFromSelectedCells();
+            });
+        }
+
+        // Deckkraft-Regler initialisieren
+        if (highlightOpacityInput && highlightOpacityValue) {
+            // Startwert aus Input übernehmen
+            const startVal = parseInt(highlightOpacityInput.value || '40', 10);
+            selectedHighlightOpacity = Math.max(0.1, Math.min(1, startVal / 100));
+            highlightOpacityValue.textContent = `${startVal}%`;
+
+            highlightOpacityInput.addEventListener('input', () => {
+                const val = parseInt(highlightOpacityInput.value || '40', 10);
+                selectedHighlightOpacity = Math.max(0.1, Math.min(1, val / 100));
+                highlightOpacityValue.textContent = `${val}%`;
+            });
+        }
+
+        // Farbpalette initialisieren
+        if (colorSwatches && colorSwatches.length > 0) {
+            colorSwatches.forEach((swatch, index) => {
+                const color = swatch.getAttribute('data-color');
+                if (color) {
+                    swatch.style.backgroundColor = color;
+                }
+
+                // Erste Farbe als Standard markieren
+                if (index === 0 && color) {
+                    selectedHighlightColor = color;
+                    swatch.classList.add('selected');
+                }
+
+                swatch.addEventListener('click', () => {
+                    // Auswahl-Zustand visuell aktualisieren
+                    colorSwatches.forEach(s => s.classList.remove('selected'));
+                    swatch.classList.add('selected');
+
+                    // Aktive Farbe setzen
+                    if (color) {
+                        selectedHighlightColor = color;
+                    }
+                });
+            });
+        }
         
         // Starte Auto-Refresh
         startAutoRefresh();
@@ -936,6 +1053,87 @@ function restoreMergedCells() {
     console.log('restoreMergedCells: Abgeschlossen');
 }
 
+// Farbmarkierung für ausgewählte Zellen (speichert dauerhaft)
+function applyHighlightToSelectedCells() {
+    if (selectedCells.size === 0) return;
+    
+    const hexColor = selectedHighlightColor || '#fff176';
+    const alpha = Math.max(0.1, Math.min(1, selectedHighlightOpacity));
+
+    // Hex nach RGB umwandeln
+    const match = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hexColor);
+    if (!match) return;
+
+    const r = parseInt(match[1], 16);
+    const g = parseInt(match[2], 16);
+    const b = parseInt(match[3], 16);
+    const rgbaColor = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+
+    selectedCells.forEach(cell => {
+        if (!cell) return;
+        const employee = cell.getAttribute('data-employee');
+        const dateKey = cell.getAttribute('data-date');
+        if (!employee || !dateKey) return;
+
+        const highlightKey = `${employee}-${dateKey}`;
+
+        // Im Speicher (Firebase/localStorage) ablegen
+        cellHighlights[highlightKey] = {
+            color: rgbaColor,
+            hex: hexColor,
+            opacity: alpha
+        };
+
+        // Im DOM anwenden
+        cell.style.backgroundColor = rgbaColor;
+        // Textfarbe für gute Lesbarkeit anpassen
+        cell.style.color = alpha > 0.6 ? '#000' : (cell.style.color || '#000');
+    });
+
+    // Persistieren
+    saveData('cellHighlights', cellHighlights);
+}
+
+// Nur Farbmarkierungen der ausgewählten Zellen löschen (Inhalt/Status bleiben erhalten)
+async function clearHighlightsFromSelectedCells() {
+    if (selectedCells.size === 0) return;
+
+    selectedCells.forEach(cell => {
+        if (!cell) return;
+        const employee = cell.getAttribute('data-employee');
+        const dateKey = cell.getAttribute('data-date');
+        if (!employee || !dateKey) return;
+
+        const highlightKey = `${employee}-${dateKey}`;
+        delete cellHighlights[highlightKey];
+
+        // Hintergrund zurück auf Status-/Standardfarbe setzen
+        const assignment = assignments[employee]?.[dateKey];
+        if (assignment && assignment.status) {
+            // Status-Farben wie in updateCell
+            const statusColors = {
+                'urlaub': '#28a745',
+                'krank': '#dc3545',
+                'unbezahlt': '#ffc107',
+                'schulung': '#6f42c1',
+                'feiertag': '#17a2b8',
+                'kurzarbeit': '#795548',
+                'abgerechnet': '#e8f5e9',
+                'ueberstunden': '#20c997'
+            };
+            const bg = assignment.status === 'abgerechnet' ? '#d4edda' : statusColors[assignment.status] || '';
+            cell.style.backgroundColor = bg;
+            cell.style.color = bg === '#e8f5e9' || bg === '#ffc107' || bg === '' ? 'black' : 'white';
+        } else {
+            // Kein Status: Standard-Hintergrund
+            cell.style.backgroundColor = '#f3f3f3';
+            cell.style.color = '#111111';
+        }
+    });
+
+    await saveData('cellHighlights', cellHighlights);
+}
+
 function setupDesktopWeekView() {
     const calendarContainer = document.querySelector('.calendar-container');
     
@@ -1009,28 +1207,30 @@ function setupDesktopWeekView() {
             nameSpan.textContent = employee;
             nameContainer.appendChild(nameSpan);
             
+            // Container für Aktionen (rechtsbündig)
+            const actionsContainer = document.createElement('div');
+            actionsContainer.className = 'name-actions';
+            
             // Verschiebe-Buttons
             const moveUpButton = document.createElement('button');
             moveUpButton.className = 'move-employee';
             moveUpButton.textContent = '↑';
             moveUpButton.title = 'Nach oben verschieben';
-            moveUpButton.style.cssText = 'margin: 0 2px; padding: 2px 6px; font-size: 12px;';
             moveUpButton.addEventListener('click', (e) => {
                 e.stopPropagation();
                 moveEmployee(employee, 'up');
             });
-            nameContainer.appendChild(moveUpButton);
+            actionsContainer.appendChild(moveUpButton);
             
             const moveDownButton = document.createElement('button');
             moveDownButton.className = 'move-employee';
             moveDownButton.textContent = '↓';
             moveDownButton.title = 'Nach unten verschieben';
-            moveDownButton.style.cssText = 'margin: 0 2px; padding: 2px 6px; font-size: 12px;';
             moveDownButton.addEventListener('click', (e) => {
                 e.stopPropagation();
                 moveEmployee(employee, 'down');
             });
-            nameContainer.appendChild(moveDownButton);
+            actionsContainer.appendChild(moveDownButton);
             
             const deleteButton = document.createElement('button');
             deleteButton.className = 'delete-employee';
@@ -1039,7 +1239,9 @@ function setupDesktopWeekView() {
                 e.stopPropagation();
                 showDeleteEmployeeModal(employee);
             });
-            nameContainer.appendChild(deleteButton);
+            actionsContainer.appendChild(deleteButton);
+
+            nameContainer.appendChild(actionsContainer);
             
             nameCell.appendChild(nameContainer);
             row.appendChild(nameCell);
@@ -1823,6 +2025,12 @@ async function applyStatusToSelectedCells(status) {
             statusText: statusText
         });
     });
+    
+    // Bei Status "abgerechnet" Kalender neu aufbauen,
+    // damit zusammengeführte Felder sofort wieder korrekt dargestellt werden
+    if (status === 'abgerechnet') {
+        updateCalendar();
+    }
     
     clearSelection();
 }
@@ -2703,6 +2911,7 @@ function updateCell(cell, employee, dateKey) {
     const noteKey = `${employee}-${dateKey}`;
     const linkKey = `${employee}-${dateKey}-link`;
     const addressKey = `${employee}-${dateKey}-address`;
+    const highlightKey = `${employee}-${dateKey}`;
     
     if (assignment) {
         const statusColors = {
@@ -2782,6 +2991,14 @@ function updateCell(cell, employee, dateKey) {
                 cellText.textContent = '';
             }
         }
+    }
+
+    // Wende ggf. gespeicherte Farbmarkierung an (überschreibt Status-Farbe nur visuell)
+    const highlight = cellHighlights[highlightKey];
+    if (highlight && highlight.color) {
+        cell.style.backgroundColor = highlight.color;
+        // Lesbarkeit sicherstellen
+        cell.style.color = highlight.opacity && highlight.opacity > 0.6 ? '#000' : (cell.style.color || '#000');
     }
     
     // Setze die Notiz, wenn vorhanden
@@ -4173,10 +4390,6 @@ async function pasteContentToCell(cell, employee, dateKey) {
     await saveData('cellLinks', cellLinks);
     await saveData('cellAddresses', cellAddresses);
 }
-
-// Auto-Refresh Funktionen
-let autoRefreshInterval = null;
-let isUserEditing = false;
 
 function startAutoRefresh() {
     if (autoRefreshInterval) return; // Bereits aktiv

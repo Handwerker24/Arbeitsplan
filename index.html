@@ -53,7 +53,58 @@
             <button class="status-button" data-status="schulung">Schule</button>
             <button class="status-button" data-status="feiertag">Feiertag</button>
             <button class="status-button" data-status="kurzarbeit">Kurzarbeit</button>
-            <button id="clearSelection">Auswahl löschen</button>
+            <button class="status-button" data-status="abgerechnet">Abgerechnet</button>
+        </div>
+
+        <!-- Farbmarkierung für ausgewählte Felder (nur visuell, ohne Datenänderung) -->
+        <div class="highlight-controls">
+            <div class="highlight-header">
+                <span class="highlight-title">Farbmarkierung</span>
+                <div class="highlight-header-buttons">
+                    <button id="applyHighlight" class="highlight-apply-button">Auf markierte Felder anwenden</button>
+                    <button id="clearHighlight" class="highlight-clear-button">Farbmarkierung löschen</button>
+                </div>
+            </div>
+            <div class="highlight-opacity-row">
+                <label for="highlightOpacity">Deckkraft:</label>
+                <input type="range" id="highlightOpacity" min="10" max="100" value="40">
+                <span id="highlightOpacityValue">40%</span>
+            </div>
+            <div class="highlight-swatches">
+                <!-- Vordefinierte Farbpalette (ca. 30 Farben) -->
+                <div class="highlight-color-swatch" data-color="#ff5252"></div>
+                <div class="highlight-color-swatch" data-color="#ff8a80"></div>
+                <div class="highlight-color-swatch" data-color="#ffb74d"></div>
+                <div class="highlight-color-swatch" data-color="#ffd54f"></div>
+                <div class="highlight-color-swatch" data-color="#fff176"></div>
+                <div class="highlight-color-swatch" data-color="#cddc39"></div>
+                <div class="highlight-color-swatch" data-color="#aed581"></div>
+                <div class="highlight-color-swatch" data-color="#81c784"></div>
+                <div class="highlight-color-swatch" data-color="#4caf50"></div>
+                <div class="highlight-color-swatch" data-color="#1b5e20"></div>
+
+                <div class="highlight-color-swatch" data-color="#80cbc4"></div>
+                <div class="highlight-color-swatch" data-color="#4db6ac"></div>
+                <div class="highlight-color-swatch" data-color="#26a69a"></div>
+                <div class="highlight-color-swatch" data-color="#0097a7"></div>
+                <div class="highlight-color-swatch" data-color="#00bcd4"></div>
+                <div class="highlight-color-swatch" data-color="#4fc3f7"></div>
+                <div class="highlight-color-swatch" data-color="#2196f3"></div>
+                <div class="highlight-color-swatch" data-color="#1e88e5"></div>
+                <div class="highlight-color-swatch" data-color="#3f51b5"></div>
+                <div class="highlight-color-swatch" data-color="#5c6bc0"></div>
+
+                <div class="highlight-color-swatch" data-color="#9c27b0"></div>
+                <div class="highlight-color-swatch" data-color="#ba68c8"></div>
+                <div class="highlight-color-swatch" data-color="#e91e63"></div>
+                <div class="highlight-color-swatch" data-color="#f06292"></div>
+                <div class="highlight-color-swatch" data-color="#795548"></div>
+                <div class="highlight-color-swatch" data-color="#8d6e63"></div>
+                <div class="highlight-color-swatch" data-color="#b0bec5"></div>
+                <div class="highlight-color-swatch" data-color="#90a4ae"></div>
+                <div class="highlight-color-swatch" data-color="#eeeeee"></div>
+                <div class="highlight-color-swatch" data-color="#bdbdbd"></div>
+            </div>
         </div>
 
         <!-- Modal für Notizen (Popup) -->
@@ -87,7 +138,6 @@
             <button id="exportData">Daten exportieren</button>
             <input type="file" id="importData" accept=".json" style="display: none;">
             <button id="importDataBtn">Daten importieren</button>
-            <button id="showEvaluation">Auswertung</button>
             <button id="showAuditLog">Änderungsprotokoll</button>
         </div>
     </div>
@@ -109,24 +159,6 @@
             <p>Möchten Sie den Mitarbeiter <span id="employeeToDelete"></span> wirklich entfernen?</p>
             <button id="confirmDelete">Ja</button>
             <button id="cancelDelete">Nein</button>
-        </div>
-    </div>
-
-    <!-- Modal für Auswertung -->
-    <div id="evaluationModal" class="modal">
-        <div class="modal-content" style="max-width: 90%; max-height: 90vh; overflow: auto;">
-            <button id="closeEvaluation" class="close-button-x">×</button>
-            <h2>Auswertung</h2>
-            <div style="margin: 20px 0;">
-                <label for="evaluationYear">Jahr auswählen:</label>
-                <select id="evaluationYear" style="padding: 5px; margin-left: 10px;">
-                    <!-- Wird dynamisch gefüllt -->
-                </select>
-                <button id="generateEvaluation" style="margin-left: 10px; padding: 5px 15px;">Auswertung generieren</button>
-            </div>
-            <div id="evaluationTable" style="margin-top: 20px;">
-                <!-- Tabelle wird hier eingefügt -->
-            </div>
         </div>
     </div>
 

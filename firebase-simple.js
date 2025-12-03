@@ -66,18 +66,21 @@ class FirebaseDB {
     // Daten in Firebase speichern
     async saveData(key, data) {
         if (!this.db) {
-            console.warn('Firebase nicht verfügbar, verwende localStorage');
+            console.warn('[FirebaseDB.saveData] Firebase nicht verfügbar, verwende localStorage');
             localStorage.setItem(key, JSON.stringify(data));
             return;
         }
 
         try {
+            console.log(`[FirebaseDB.saveData] Versuche ${key} in Firebase zu schreiben...`);
             await this.db.ref(key).set(data);
-            console.log(`Daten gespeichert für: ${key}`);
+            console.log(`[FirebaseDB.saveData] ${key} erfolgreich in Firebase gespeichert`);
         } catch (error) {
-            console.error(`Fehler beim Speichern: ${error.message}`);
+            console.error(`[FirebaseDB.saveData] Fehler beim Speichern von ${key}:`, error);
+            console.error(`[FirebaseDB.saveData] Fehler-Details:`, error.code, error.message);
             // Fallback zu localStorage
             localStorage.setItem(key, JSON.stringify(data));
+            console.log(`[FirebaseDB.saveData] ${key} in localStorage gespeichert (Fallback)`);
         }
     }
 
@@ -91,6 +94,7 @@ class FirebaseDB {
             cellNotes: await this.loadData('cellNotes') || {},
             cellLinks: await this.loadData('cellLinks') || {},
             cellAddresses: await this.loadData('cellAddresses') || {},
+            cellHighlights: await this.loadData('cellHighlights') || {},
             mergedCells: await this.loadData('mergedCells') || {}
         };
         return data;
