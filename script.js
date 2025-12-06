@@ -924,12 +924,14 @@ function updateCalendar() {
 
 // Funktion zum Wiederherstellen der Zusammenführungen nach updateCalendar
 function restoreMergedCells() {
+    console.log('restoreMergedCells: Funktion aufgerufen, isWeekView:', isWeekView);
     if (!mergedCells || Object.keys(mergedCells).length === 0) {
         console.log('restoreMergedCells: Keine mergedCells gefunden');
         return;
     }
     
     console.log('restoreMergedCells: Starte Wiederherstellung, mergedCells:', mergedCells);
+    console.log('restoreMergedCells: Anzahl mergedCells:', Object.keys(mergedCells).length);
     
     // Bestimme den sichtbaren Datumsbereich
     let visibleStartDate, visibleEndDate;
@@ -973,11 +975,19 @@ function restoreMergedCells() {
         const employee = parts[0];
         const firstDateKey = parts.slice(1).join('-'); // Rest ist das Datum
         
+        console.log('restoreMergedCells: Prüfe mergeKey:', mergeKey, 'firstDateKey:', firstDateKey, 'isWeekView:', isWeekView);
+        
         // Prüfe, ob das Datum in der aktuellen Ansicht sichtbar ist
-        if (!isDateVisible(firstDateKey)) {
+        const isVisible = isDateVisible(firstDateKey);
+        console.log('restoreMergedCells: Datum sichtbar?', isVisible, 'firstDateKey:', firstDateKey);
+        
+        if (!isVisible) {
             // Überspringe Merges, die nicht in der aktuellen Ansicht sind
+            console.log('restoreMergedCells: Überspringe', firstDateKey, 'nicht sichtbar');
             return;
         }
+        
+        console.log('restoreMergedCells: Datum ist sichtbar, verarbeite:', firstDateKey);
         
         const mergeData = mergedCells[mergeKey];
         
@@ -1058,12 +1068,14 @@ function restoreMergedCells() {
             // Stelle die Zusammenführung wieder her mit colspan
             // spanCount wurde bereits oben berechnet
             
-            console.log('Wiederherstelle Zusammenführung:', { spanCount });
+            console.log('Wiederherstelle Zusammenführung:', { spanCount, mergeData });
+            console.log('restoreMergedCells: mergeData.mergedCells:', mergeData.mergedCells, 'Länge:', mergeData.mergedCells?.length);
             
             // Entferne vorhandene Zellen, die Teil der Zusammenführung sein sollten
             // WICHTIG: Hole allCells neu, da sich die Liste nach dem Entfernen ändert
             const cellsToRemove = [];
             if (mergeData.mergedCells && mergeData.mergedCells.length > 1) {
+                console.log('restoreMergedCells: mergeData.mergedCells.length > 1, entferne Zellen');
                 // Hole alle Zellen der Zeile neu, da sich die Liste ändern könnte
                 const currentRowCells = Array.from(targetRow.children);
                 console.log('restoreMergedCells: Suche Zellen zum Entfernen. mergeData.mergedCells:', mergeData.mergedCells);
@@ -1165,32 +1177,50 @@ function restoreMergedCells() {
                     console.log('restoreMergedCells: colspan neu gesetzt:', spanCount);
                 }
                 
-                // Stelle sicher, dass der Text angezeigt wird
+                // Stelle sicher, dass der Text angezeigt wird (aber nicht doppelt)
                 if (finalText) {
-                    const updatedCellText = firstCell.querySelector('.cell-text');
-                    if (updatedCellText) {
-                        updatedCellText.textContent = finalText;
-                    } else {
-                        // Erstelle cell-text falls nicht vorhanden
-                        const cellContent = firstCell.querySelector('.cell-content') || document.createElement('div');
+                    // Entferne alle .cell-text Elemente zuerst, um doppelte zu vermeiden
+                    const allCellTexts = firstCell.querySelectorAll('.cell-text');
+                    allCellTexts.forEach(textEl => textEl.remove());
+                    
+                    // Erstelle ein neues .cell-text Element
+                    let cellContent = firstCell.querySelector('.cell-content');
+                    if (!cellContent) {
+                        cellContent = document.createElement('div');
                         cellContent.className = 'cell-content';
-                        const newCellText = document.createElement('div');
-                        newCellText.className = 'cell-text';
-                        newCellText.textContent = finalText;
-                        cellContent.appendChild(newCellText);
-                        if (!firstCell.querySelector('.cell-content')) {
-                            firstCell.appendChild(cellContent);
-                        }
+                        firstCell.appendChild(cellContent);
                     }
+                    
+                    const newCellText = document.createElement('div');
+                    newCellText.className = 'cell-text';
+                    newCellText.textContent = finalText;
+                    cellContent.appendChild(newCellText);
                 }
                 
                 // DEBUG: Prüfe finalen Zustand
+                const finalColspan = firstCell.getAttribute('colspan');
+                const finalDataMerged = firstCell.hasAttribute('data-merged');
+                const finalTextContent = firstCell.textContent;
+                const finalCellText = firstCell.querySelector('.cell-text')?.textContent;
+                
                 console.log('restoreMergedCells: Finaler Zustand:', {
-                    colspan: firstCell.getAttribute('colspan'),
-                    dataMerged: firstCell.hasAttribute('data-merged'),
-                    text: firstCell.textContent,
-                    cellText: firstCell.querySelector('.cell-text')?.textContent
+                    colspan: finalColspan,
+                    dataMerged: finalDataMerged,
+                    text: finalTextContent,
+                    cellText: finalCellText,
+                    rowChildren: targetRow.children.length,
+                    firstCellIndex: Array.from(targetRow.children).indexOf(firstCell)
                 });
+                
+                // WICHTIG: Prüfe, ob colspan tatsächlich im DOM gesetzt ist
+                if (finalColspan && finalDataMerged) {
+                    console.log('restoreMergedCells: ✓ colspan ist gesetzt:', finalColspan, 'data-merged:', finalDataMerged);
+                } else {
+                    console.error('restoreMergedCells: ✗ PROBLEM - colspan nicht gesetzt!', {
+                        colspan: finalColspan,
+                        dataMerged: finalDataMerged
+                    });
+                }
             }
             
             console.log('Zusammenführung wiederhergestellt - Text:', finalText, 'spanCount:', spanCount, 'mergedCells:', mergeData.mergedCells);
@@ -1991,9 +2021,8 @@ function showCurrentWeek() {
         console.log('showCurrentWeek: Rufe restoreMergedCells auf');
         restoreMergedCells();
         
-        // WICHTIG: Nach restoreMergedCells: Rufe updateCell für ALLE Zellen auf
-        // Das stellt sicher, dass Farbmarkierungen, Status-Farben und Text korrekt angezeigt werden
-        // updateCell entfernt colspan nicht, wenn data-merged gesetzt ist
+        // WICHTIG: Nach restoreMergedCells: Rufe updateCell für Zellen auf, die NICHT zusammengeführt sind
+        // Für zusammengeführte Zellen wurde updateCell bereits in restoreMergedCells aufgerufen
         setTimeout(() => {
             const allRows = document.querySelectorAll('tbody tr');
             allRows.forEach(row => {
@@ -2003,15 +2032,15 @@ function showCurrentWeek() {
                 const cells = row.querySelectorAll('td.calendar-cell');
                 cells.forEach(cell => {
                     const dateKey = cell.getAttribute('data-date');
-                    if (dateKey) {
+                    if (dateKey && !cell.hasAttribute('data-merged')) {
+                        // Nur für nicht-zusammengeführte Zellen updateCell aufrufen
                         updateCell(cell, employee, dateKey);
-                        
-                        // Stelle sicher, dass colspan erhalten bleibt, wenn die Zelle zusammengeführt ist
-                        if (cell.hasAttribute('data-merged')) {
-                            const savedColspan = cell.getAttribute('colspan');
-                            if (savedColspan) {
-                                cell.setAttribute('colspan', savedColspan);
-                            }
+                    } else if (dateKey && cell.hasAttribute('data-merged')) {
+                        // Für zusammengeführte Zellen: Stelle sicher, dass colspan erhalten bleibt
+                        const savedColspan = cell.getAttribute('colspan');
+                        if (savedColspan) {
+                            cell.setAttribute('colspan', savedColspan);
+                            console.log('showCurrentWeek: colspan wiederhergestellt für', dateKey, ':', savedColspan);
                         }
                     }
                 });
