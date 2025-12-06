@@ -293,22 +293,25 @@ function undo() {
 }
 
 // Logout-Funktionalität
-document.getElementById('logoutButton').addEventListener('click', async function() {
-    // Firebase Auth Sign Out
-    if (typeof firebase !== 'undefined' && firebase.auth) {
-        try {
-            await firebase.auth().signOut();
-            console.log('Erfolgreich ausgeloggt');
-        } catch (error) {
-            console.error('Fehler beim Ausloggen:', error);
+const logoutButton = document.getElementById('logoutButton');
+if (logoutButton) {
+    logoutButton.addEventListener('click', async function() {
+        // Firebase Auth Sign Out
+        if (typeof firebase !== 'undefined' && firebase.auth) {
+            try {
+                await firebase.auth().signOut();
+                console.log('Erfolgreich ausgeloggt');
+            } catch (error) {
+                console.error('Fehler beim Ausloggen:', error);
+            }
         }
-    }
-    
-    // Lösche die Benutzerinformationen aus dem localStorage
-    localStorage.removeItem('currentUser');
-    // Leite zur Login-Seite weiter
-    window.location.href = 'login.html';
-});
+        
+        // Lösche die Benutzerinformationen aus dem localStorage
+        localStorage.removeItem('currentUser');
+        // Leite zur Login-Seite weiter
+        window.location.href = 'login.html';
+    });
+}
 
 // DOM-Elemente (werden beim Initialisieren gesetzt)
 let yearGrid, monthGrid, calendarBody, headerRow, employeeModal, employeeNameInput;
@@ -928,6 +931,37 @@ function restoreMergedCells() {
     
     console.log('restoreMergedCells: Starte Wiederherstellung, mergedCells:', mergedCells);
     
+    // Bestimme den sichtbaren Datumsbereich
+    let visibleStartDate, visibleEndDate;
+    if (isWeekView) {
+        const monday = getCurrentWeek();
+        visibleStartDate = new Date(monday);
+        visibleEndDate = new Date(monday);
+        visibleEndDate.setDate(monday.getDate() + 6);
+    } else {
+        const year = currentDate.getFullYear();
+        const month = currentDate.getMonth();
+        visibleStartDate = new Date(year, month, 1);
+        visibleEndDate = new Date(year, month + 1, 0);
+    }
+    
+    // Hilfsfunktion zum Parsen eines dateKey
+    function parseDateKey(dateKey) {
+        const parts = dateKey.split('-');
+        if (parts.length !== 3) return null;
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1; // Monat ist 0-basiert
+        const day = parseInt(parts[2], 10);
+        return new Date(year, month, day);
+    }
+    
+    // Hilfsfunktion zum Prüfen, ob ein Datum im sichtbaren Bereich liegt
+    function isDateVisible(dateKey) {
+        const date = parseDateKey(dateKey);
+        if (!date) return false;
+        return date >= visibleStartDate && date <= visibleEndDate;
+    }
+    
     Object.keys(mergedCells).forEach(mergeKey => {
         const parts = mergeKey.split('-');
         if (parts.length < 4) {
@@ -938,6 +972,13 @@ function restoreMergedCells() {
         // mergeKey Format: "employee-year-month-day"
         const employee = parts[0];
         const firstDateKey = parts.slice(1).join('-'); // Rest ist das Datum
+        
+        // Prüfe, ob das Datum in der aktuellen Ansicht sichtbar ist
+        if (!isDateVisible(firstDateKey)) {
+            // Überspringe Merges, die nicht in der aktuellen Ansicht sind
+            return;
+        }
+        
         const mergeData = mergedCells[mergeKey];
         
         console.log('Wiederherstelle Merge:', { employee, firstDateKey, mergeData });
@@ -966,7 +1007,8 @@ function restoreMergedCells() {
         });
         
         if (!firstCell) {
-            console.warn('Erste Zelle nicht gefunden für dateKey:', firstDateKey);
+            // Reduziere Warnung - nur wenn das Datum eigentlich sichtbar sein sollte
+            // console.warn('Erste Zelle nicht gefunden für dateKey:', firstDateKey);
             return;
         }
         
@@ -1010,7 +1052,7 @@ function restoreMergedCells() {
             }
             
             // Stelle die Zusammenführung wieder her mit colspan
-            const spanCount = mergeData.mergedCells ? mergeData.mergedCells.length : 1;
+            // spanCount wurde bereits oben berechnet
             
             console.log('Wiederherstelle Zusammenführung:', { spanCount });
             
@@ -1918,11 +1960,37 @@ async function applyStatusToSelectedCells(status) {
         'ueberstunden': '#20c997'
     };
 
-    selectedCells.forEach(cell => {
+    // Sammle alle Zellen, die geändert werden müssen, und entferne Farbmarkierungen
+    const highlightsToRemove = [];
+    for (const cell of selectedCells) {
         const row = cell.parentElement;
         const employee = row.querySelector('td:first-child span').textContent;
         const dateKey = getDateKeyFromCell(cell);
-        if (!dateKey) return;
+        if (!dateKey) continue;
+        
+        // Für "abgerechnet": Sammle Farbmarkierungen zum Entfernen
+        if (status === 'abgerechnet') {
+            const highlightKey = `${employee}-${dateKey}`;
+            if (cellHighlights[highlightKey]) {
+                highlightsToRemove.push(highlightKey);
+            }
+        }
+    }
+    
+    // Entferne alle Farbmarkierungen auf einmal
+    if (highlightsToRemove.length > 0) {
+        highlightsToRemove.forEach(key => {
+            delete cellHighlights[key];
+        });
+        await saveData('cellHighlights', cellHighlights);
+    }
+    
+    // Verarbeite alle Zellen
+    for (const cell of selectedCells) {
+        const row = cell.parentElement;
+        const employee = row.querySelector('td:first-child span').textContent;
+        const dateKey = getDateKeyFromCell(cell);
+        if (!dateKey) continue;
         
         if (!assignments[employee]) {
             assignments[employee] = {};
@@ -1947,13 +2015,14 @@ async function applyStatusToSelectedCells(status) {
             
             // Für "abgerechnet": Text sichtbar lassen, nur leicht grün hinterlegen und Haken hinzufügen
             if (status === 'abgerechnet') {
+                
                 // Setze den neuen Status - nur wenn Text vorhanden ist, sonst leer lassen
                 assignments[employee][dateKey] = {
                     text: originalText || '', // Leere Felder bleiben leer
                     status: status
                 };
                 
-                // Leicht grüne Hintergrundfarbe
+                // Leicht grüne Hintergrundfarbe (überschreibt alle anderen Farben)
                 cell.style.backgroundColor = '#d4edda';
                 cell.style.color = 'black';
                 
@@ -2006,7 +2075,7 @@ async function applyStatusToSelectedCells(status) {
         if (date.getDay() === 0 || date.getDay() === 6) {
             cell.classList.add('weekend-cell');
         }
-    });
+    }
     
     // Warte auf das Speichern, damit die Daten sicher gespeichert sind
     await saveData('assignments', assignments);
@@ -2342,9 +2411,12 @@ function isDateInRange(date, startDate, endDate) {
 }
 
 // Event Listener für das Modal
-document.getElementById('cancelEmployee').addEventListener('click', () => {
-    hideEmployeeModal();
-});
+const cancelEmployeeBtn2 = document.getElementById('cancelEmployee');
+if (cancelEmployeeBtn2) {
+    cancelEmployeeBtn2.addEventListener('click', () => {
+        hideEmployeeModal();
+    });
+}
 
 // Event Listener für Klick außerhalb des Modals
 document.addEventListener('click', (e) => {
@@ -2359,14 +2431,22 @@ function exportData() {
 }
 
 // Event Listener für Export
-document.getElementById('exportData').addEventListener('click', () => {
-    document.getElementById('exportModal').style.display = 'block';
-});
+const exportDataBtn = document.getElementById('exportData');
+if (exportDataBtn) {
+    exportDataBtn.addEventListener('click', () => {
+        const exportModal = document.getElementById('exportModal');
+        if (exportModal) exportModal.style.display = 'block';
+    });
+}
 
 // Event Listener für Export-Modal
-document.getElementById('cancelExport').addEventListener('click', () => {
-    document.getElementById('exportModal').style.display = 'none';
-});
+const cancelExportBtn = document.getElementById('cancelExport');
+if (cancelExportBtn) {
+    cancelExportBtn.addEventListener('click', () => {
+        const exportModal = document.getElementById('exportModal');
+        if (exportModal) exportModal.style.display = 'none';
+    });
+}
 
 // Event Listener für Export-Bereich Änderung
 document.querySelectorAll('input[name="exportRange"]').forEach(radio => {
@@ -2391,38 +2471,48 @@ document.querySelectorAll('input[name="exportRange"]').forEach(radio => {
     });
 });
 
-document.getElementById('confirmExport').addEventListener('click', () => {
-    const exportRange = document.querySelector('input[name="exportRange"]:checked').value;
-    const exportFormats = Array.from(document.querySelectorAll('input[name="exportFormat"]:checked')).map(input => input.value);
-    
-    if (exportFormats.length === 0) {
-        alert('Bitte wählen Sie mindestens ein Dateiformat aus.');
-        return;
-    }
-    
-    try {
-        let exportYear = currentDate.getFullYear();
-        if (exportRange === 'all') {
-            exportYear = parseInt(document.getElementById('exportYear').value);
+const confirmExportBtn = document.getElementById('confirmExport');
+if (confirmExportBtn) {
+    confirmExportBtn.addEventListener('click', () => {
+        const exportRangeInput = document.querySelector('input[name="exportRange"]:checked');
+        if (!exportRangeInput) return;
+        const exportRange = exportRangeInput.value;
+        const exportFormats = Array.from(document.querySelectorAll('input[name="exportFormat"]:checked')).map(input => input.value);
+        
+        if (exportFormats.length === 0) {
+            alert('Bitte wählen Sie mindestens ein Dateiformat aus.');
+            return;
         }
         
-        if (exportFormats.includes('json')) {
-            exportJSON(exportRange, exportYear);
+        try {
+            let exportYear = currentDate.getFullYear();
+            if (exportRange === 'all') {
+                const exportYearInput = document.getElementById('exportYear');
+                if (exportYearInput) {
+                    exportYear = parseInt(exportYearInput.value);
+                }
+            }
+            
+            if (exportFormats.includes('json')) {
+                exportJSON(exportRange, exportYear);
+            }
+            
+            if (exportFormats.includes('excel')) {
+                exportExcel(exportRange, exportYear);
+            }
+            
+            const exportModal = document.getElementById('exportModal');
+            if (exportModal) exportModal.style.display = 'none';
+        } catch (error) {
+            console.error('Fehler beim Export:', error);
+            alert('Fehler beim Exportieren der Daten. Bitte versuchen Sie es erneut.');
         }
-        
-        if (exportFormats.includes('excel')) {
-            exportExcel(exportRange, exportYear);
-        }
-        
-        document.getElementById('exportModal').style.display = 'none';
-    } catch (error) {
-        console.error('Fehler beim Export:', error);
-        alert('Fehler beim Exportieren der Daten. Bitte versuchen Sie es erneut.');
-    }
-});
+    });
+}
 
 function exportJSON(range, year = null) {
-    // Verwende die globalen Variablen, die aus Firebase geladen wurden (nicht localStorage)
+    // JSON-Export: IMMER alle Daten exportieren (keine Filterung)
+    // Excel-Export filtert nach Jahr/Monat, aber JSON enthält immer alle Daten für vollständiges Backup
     const data = {
         employees: employees || [],
         assignments: assignments || {},
@@ -2430,66 +2520,19 @@ function exportJSON(range, year = null) {
         employeeEndDates: employeeEndDates || {},
         cellNotes: cellNotes || {},
         cellLinks: cellLinks || {},
-        cellAddresses: cellAddresses || {}
+        cellAddresses: cellAddresses || {},
+        mergedCells: mergedCells || {}
     };
-
-    // Wenn nur aktueller Monat exportiert werden soll
-    if (range === 'currentMonth') {
-        const currentMonth = currentDate.getMonth() + 1;
-        const currentYear = currentDate.getFullYear();
-        
-        // Filtere die Daten für den aktuellen Monat
-        Object.keys(data.assignments).forEach(employee => {
-            data.assignments[employee] = Object.fromEntries(
-                Object.entries(data.assignments[employee]).filter(([key]) => {
-                    const [year, month] = key.split('-');
-                    return parseInt(year) === currentYear && parseInt(month) === currentMonth;
-                })
-            );
-        });
-        
-        // Filtere Notizen, Links und Adressen
-        ['cellNotes', 'cellLinks', 'cellAddresses'].forEach(key => {
-            data[key] = Object.fromEntries(
-                Object.entries(data[key]).filter(([key]) => {
-                    const [employee, year, month] = key.split('-');
-                    return parseInt(year) === currentYear && parseInt(month) === currentMonth;
-                })
-            );
-        });
-    } else if (range === 'all' && year) {
-        // Filtere die Daten für das gewählte Jahr
-        Object.keys(data.assignments).forEach(employee => {
-            data.assignments[employee] = Object.fromEntries(
-                Object.entries(data.assignments[employee]).filter(([key]) => {
-                    const [y] = key.split('-');
-                    return parseInt(y) === year;
-                })
-            );
-        });
-        
-        // Filtere Notizen, Links und Adressen
-        ['cellNotes', 'cellLinks', 'cellAddresses'].forEach(key => {
-            data[key] = Object.fromEntries(
-                Object.entries(data[key]).filter(([key]) => {
-                    const parts = key.split('-');
-                    if (parts.length >= 2) {
-                        const y = parseInt(parts[1]);
-                        return y === year;
-                    }
-                    return false;
-                })
-            );
-        });
-    }
+    
+    // KEINE Filterung - alle Daten werden exportiert
 
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `arbeitsplan_${range === 'currentMonth' ? 
-        `${currentDate.getFullYear()}-${currentDate.getMonth() + 1}` : 
-        year ? `${year}` : 'backup'}.json`;
+    // Dateiname mit Timestamp für vollständiges Backup
+    const timestamp = new Date().toISOString().split('T')[0];
+    a.download = `arbeitsplan_backup_${timestamp}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -2721,27 +2764,69 @@ function importData(file) {
                 employeeEndDates: JSON.parse(JSON.stringify(employeeEndDates)),
                 cellNotes: JSON.parse(JSON.stringify(cellNotes)),
                 cellLinks: JSON.parse(JSON.stringify(cellLinks)),
-                cellAddresses: JSON.parse(JSON.stringify(cellAddresses))
+                cellAddresses: JSON.parse(JSON.stringify(cellAddresses)),
+                mergedCells: JSON.parse(JSON.stringify(mergedCells))
             };
             console.log('Backup erstellt vor Import');
 
-            // Speichere die neuen Daten in Firebase
-            await saveData('employees', data.employees);
-            await saveData('assignments', data.assignments);
-            await saveData('employeeStartDates', data.employeeStartDates);
-            await saveData('employeeEndDates', data.employeeEndDates);
-            await saveData('cellNotes', data.cellNotes);
-            await saveData('cellLinks', data.cellLinks);
-            await saveData('cellAddresses', data.cellAddresses);
-
-            // Aktualisiere die globalen Variablen
-            employees = data.employees;
-            assignments = data.assignments;
-            employeeStartDates = data.employeeStartDates;
-            employeeEndDates = data.employeeEndDates;
-            cellNotes = data.cellNotes;
-            cellLinks = data.cellLinks;
-            cellAddresses = data.cellAddresses;
+            // MERGE statt REPLACE: Füge importierte Daten zu bestehenden Daten hinzu
+            // So werden Daten aus anderen Jahren nicht gelöscht
+            
+            // Employees: Füge neue hinzu, behalte bestehende
+            if (data.employees && Array.isArray(data.employees)) {
+                data.employees.forEach(emp => {
+                    if (!employees.includes(emp)) {
+                        employees.push(emp);
+                    }
+                });
+            }
+            
+            // Assignments: Merge pro Mitarbeiter und Datum
+            if (data.assignments) {
+                Object.keys(data.assignments).forEach(employee => {
+                    if (!assignments[employee]) {
+                        assignments[employee] = {};
+                    }
+                    // Füge alle Assignments des Mitarbeiters hinzu (überschreibt bei Duplikaten)
+                    Object.assign(assignments[employee], data.assignments[employee]);
+                });
+            }
+            
+            // Employee Start/End Dates: Merge
+            if (data.employeeStartDates) {
+                Object.assign(employeeStartDates, data.employeeStartDates);
+            }
+            if (data.employeeEndDates) {
+                Object.assign(employeeEndDates, data.employeeEndDates);
+            }
+            
+            // Cell Notes, Links, Addresses: Merge
+            if (data.cellNotes) {
+                Object.assign(cellNotes, data.cellNotes);
+            }
+            if (data.cellLinks) {
+                Object.assign(cellLinks, data.cellLinks);
+            }
+            if (data.cellAddresses) {
+                Object.assign(cellAddresses, data.cellAddresses);
+            }
+            
+            // Merged Cells: Merge
+            if (data.mergedCells) {
+                Object.assign(mergedCells, data.mergedCells);
+            }
+            
+            // Speichere die gemergten Daten in Firebase
+            await saveData('employees', employees);
+            await saveData('assignments', assignments);
+            await saveData('employeeStartDates', employeeStartDates);
+            await saveData('employeeEndDates', employeeEndDates);
+            await saveData('cellNotes', cellNotes);
+            await saveData('cellLinks', cellLinks);
+            await saveData('cellAddresses', cellAddresses);
+            if (data.mergedCells) {
+                await saveData('mergedCells', mergedCells);
+            }
             
             // Aktualisiere die Anzeige
             updateCalendar();
@@ -2818,12 +2903,21 @@ async function undoImport() {
         await saveData('cellNotes', importBackup.cellNotes);
         await saveData('cellLinks', importBackup.cellLinks);
         await saveData('cellAddresses', importBackup.cellAddresses);
+        if (importBackup.mergedCells) {
+            await saveData('mergedCells', importBackup.mergedCells);
+        }
 
         // Aktualisiere die globalen Variablen
         employees = importBackup.employees;
         assignments = importBackup.assignments;
         employeeStartDates = importBackup.employeeStartDates;
         employeeEndDates = importBackup.employeeEndDates;
+        cellNotes = importBackup.cellNotes;
+        cellLinks = importBackup.cellLinks;
+        cellAddresses = importBackup.cellAddresses;
+        if (importBackup.mergedCells) {
+            mergedCells = importBackup.mergedCells;
+        }
         cellNotes = importBackup.cellNotes;
         cellLinks = importBackup.cellLinks;
         cellAddresses = importBackup.cellAddresses;
@@ -2843,55 +2937,82 @@ async function undoImport() {
 }
 
 // Event Listener für Import
-document.getElementById('importDataBtn').addEventListener('click', () => {
-    document.getElementById('importData').click();
-});
+const importDataBtn = document.getElementById('importDataBtn');
+if (importDataBtn) {
+    importDataBtn.addEventListener('click', () => {
+        const importData = document.getElementById('importData');
+        if (importData) importData.click();
+    });
+}
 
 // Event Listener für Protokoll
-document.getElementById('showAuditLog').addEventListener('click', () => {
-    showAuditLog();
-});
+const showAuditLogBtn = document.getElementById('showAuditLog');
+if (showAuditLogBtn) {
+    showAuditLogBtn.addEventListener('click', () => {
+        showAuditLog();
+    });
+}
 
 // Event Listener für Auswertung
-document.getElementById('showEvaluation').addEventListener('click', () => {
-    const modal = document.getElementById('evaluationModal');
-    const yearSelect = document.getElementById('evaluationYear');
-    
-    // Fülle Jahr-Auswahl
-    yearSelect.innerHTML = '';
-    const currentYear = currentDate.getFullYear();
-    for (let year = 2025; year <= currentYear + 1; year++) {
-        const option = document.createElement('option');
-        option.value = year;
-        option.textContent = year;
-        if (year === currentYear) option.selected = true;
-        yearSelect.appendChild(option);
-    }
-    
-    modal.style.display = 'block';
-});
+const showEvaluationBtn = document.getElementById('showEvaluation');
+if (showEvaluationBtn) {
+    showEvaluationBtn.addEventListener('click', () => {
+        const modal = document.getElementById('evaluationModal');
+        const yearSelect = document.getElementById('evaluationYear');
+        if (!modal || !yearSelect) return;
+        
+        // Fülle Jahr-Auswahl
+        yearSelect.innerHTML = '';
+        const currentYear = currentDate.getFullYear();
+        for (let year = 2025; year <= currentYear + 1; year++) {
+            const option = document.createElement('option');
+            option.value = year;
+            option.textContent = year;
+            if (year === currentYear) option.selected = true;
+            yearSelect.appendChild(option);
+        }
+        
+        modal.style.display = 'block';
+    });
+}
 
-document.getElementById('closeEvaluation').addEventListener('click', () => {
-    document.getElementById('evaluationModal').style.display = 'none';
-});
+const closeEvaluationBtn = document.getElementById('closeEvaluation');
+if (closeEvaluationBtn) {
+    closeEvaluationBtn.addEventListener('click', () => {
+        const evaluationModal = document.getElementById('evaluationModal');
+        if (evaluationModal) evaluationModal.style.display = 'none';
+    });
+}
 
-document.getElementById('generateEvaluation').addEventListener('click', () => {
-    const year = parseInt(document.getElementById('evaluationYear').value);
-    generateEvaluation(year);
-});
+const generateEvaluationBtn = document.getElementById('generateEvaluation');
+if (generateEvaluationBtn) {
+    generateEvaluationBtn.addEventListener('click', () => {
+        const yearSelect = document.getElementById('evaluationYear');
+        if (yearSelect) {
+            const year = parseInt(yearSelect.value);
+            generateEvaluation(year);
+        }
+    });
+}
 
 // Schließe Modal beim Klick außerhalb
-document.getElementById('evaluationModal').addEventListener('click', (e) => {
-    if (e.target === document.getElementById('evaluationModal')) {
-        document.getElementById('evaluationModal').style.display = 'none';
-    }
-});
+const evaluationModal = document.getElementById('evaluationModal');
+if (evaluationModal) {
+    evaluationModal.addEventListener('click', (e) => {
+        if (e.target === evaluationModal) {
+            evaluationModal.style.display = 'none';
+        }
+    });
+}
 
-document.getElementById('importData').addEventListener('change', (e) => {
-    if (e.target.files.length > 0) {
-        importData(e.target.files[0]);
-    }
-});
+const importDataInput = document.getElementById('importData');
+if (importDataInput) {
+    importDataInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            importData(e.target.files[0]);
+        }
+    });
+}
 
 // Funktion zum Erstrecken von Text über mehrere Zellen
 // DEAKTIVIERT: Jedes Feld bleibt in seiner eigenen Zelle
@@ -2927,6 +3048,13 @@ function updateCell(cell, employee, dateKey) {
 
         // Für "abgerechnet": Leicht grün hinterlegen, Text sichtbar lassen, Haken hinzufügen
         if (assignment.status === 'abgerechnet') {
+            // Entferne Farbmarkierung, damit die hellgrüne Farbe sichtbar ist
+            const highlight = cellHighlights[highlightKey];
+            if (highlight) {
+                delete cellHighlights[highlightKey];
+                saveData('cellHighlights', cellHighlights);
+            }
+            
             cell.style.backgroundColor = '#d4edda';
             cell.style.color = 'black';
             cell.style.position = 'relative';
@@ -2994,8 +3122,10 @@ function updateCell(cell, employee, dateKey) {
     }
 
     // Wende ggf. gespeicherte Farbmarkierung an (überschreibt Status-Farbe nur visuell)
+    // AUSNAHME: Bei "abgerechnet" wird die Farbmarkierung NICHT angewendet, damit die hellgrüne Farbe sichtbar bleibt
+    // assignment wurde bereits oben deklariert (Zeile 3074)
     const highlight = cellHighlights[highlightKey];
-    if (highlight && highlight.color) {
+    if (highlight && highlight.color && (!assignment || assignment.status !== 'abgerechnet')) {
         cell.style.backgroundColor = highlight.color;
         // Lesbarkeit sicherstellen
         cell.style.color = highlight.opacity && highlight.opacity > 0.6 ? '#000' : (cell.style.color || '#000');
@@ -3167,14 +3297,6 @@ ueberstundenButton.textContent = 'Überstunden frei';
 ueberstundenButton.style.backgroundColor = '#20c997';
 ueberstundenButton.style.color = 'white';
 
-// Füge den Abgerechnet-Button hinzu (nach Überstunden frei)
-const abgerechnetButton = document.createElement('button');
-abgerechnetButton.className = 'status-button';
-abgerechnetButton.dataset.status = 'abgerechnet';
-abgerechnetButton.textContent = 'Abgerechnet';
-abgerechnetButton.style.backgroundColor = '#e8f5e9';
-abgerechnetButton.style.color = 'black';
-
 // Hole den "Auswahl löschen" Button
 const clearSelectionButton = document.getElementById('clearSelection');
 
@@ -3182,21 +3304,14 @@ const clearSelectionButton = document.getElementById('clearSelection');
 if (clearSelectionButton) {
     // Füge vor "Auswahl löschen" ein
     statusButtons.insertBefore(ueberstundenButton, clearSelectionButton);
-    statusButtons.insertBefore(abgerechnetButton, clearSelectionButton);
 } else {
     // Falls "Auswahl löschen" nicht gefunden, füge am Ende hinzu
     statusButtons.appendChild(ueberstundenButton);
-    statusButtons.appendChild(abgerechnetButton);
 }
 
 // Event Listener für den Überstunden-Button
 ueberstundenButton.addEventListener('click', async () => {
     await applyStatusToSelectedCells('ueberstunden');
-});
-
-// Event Listener für den Abgerechnet-Button
-abgerechnetButton.addEventListener('click', async () => {
-    await applyStatusToSelectedCells('abgerechnet');
 });
 
 // Funktion zur Generierung der Auswertung
@@ -4134,7 +4249,9 @@ function unmergeCellIfNeeded(cell, employee, dateKey) {
 }
 
 // Event Listener für den "Auswahl löschen" Button
-document.getElementById('clearSelection').addEventListener('click', async () => {
+const clearSelectionBtn = document.getElementById('clearSelection');
+if (clearSelectionBtn) {
+    clearSelectionBtn.addEventListener('click', async () => {
     if (selectedCells.size > 0) {
         saveState(); // Speichere den aktuellen Zustand vor dem Löschen
         
@@ -4180,7 +4297,8 @@ document.getElementById('clearSelection').addEventListener('click', async () => 
         // Lösche die Auswahl
         clearSelection();
     }
-});
+    });
+}
 
 // Mobile Kontextmenü für Long-Press
 function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
@@ -4259,6 +4377,38 @@ function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
     menu.appendChild(copyBtn);
     menu.appendChild(pasteBtn);
     
+    // Status-Buttons hinzufügen
+    const statusButtons = [
+        { status: 'urlaub', text: 'Urlaub', color: '#28a745' },
+        { status: 'krank', text: 'Krankheit', color: '#dc3545' },
+        { status: 'unbezahlt', text: 'Unbezahlter Urlaub', color: '#ffc107' },
+        { status: 'schulung', text: 'Schule', color: '#6f42c1' },
+        { status: 'feiertag', text: 'Feiertag', color: '#17a2b8' },
+        { status: 'kurzarbeit', text: 'Kurzarbeit', color: '#795548' },
+        { status: 'ueberstunden', text: 'Überstunden frei', color: '#20c997' },
+        { status: 'abgerechnet', text: 'Abgerechnet', color: '#e8f5e9' }
+    ];
+    
+    // Trennlinie vor Status-Buttons
+    const separator = document.createElement('hr');
+    separator.style.cssText = 'margin: 10px 0; border: none; border-top: 1px solid #ddd;';
+    menu.appendChild(separator);
+    
+    // Füge Status-Buttons hinzu
+    statusButtons.forEach(({ status, text, color }) => {
+        const statusBtn = document.createElement('button');
+        statusBtn.textContent = text;
+        statusBtn.style.cssText = `display: block; width: 100%; padding: 10px; margin: 5px 0; background: ${color}; color: ${status === 'abgerechnet' ? 'black' : 'white'}; border: none; border-radius: 3px;`;
+        statusBtn.addEventListener('click', async () => {
+            // Markiere die Zelle für den Status
+            selectedCells.clear();
+            selectedCells.add(cell);
+            await applyStatusToSelectedCells(status);
+            menu.remove();
+        });
+        menu.appendChild(statusBtn);
+    });
+    
     // Prüfe, ob mehrere Zellen markiert sind oder ein zusammengeführtes Feld
     const hasMergedCell = selectedCells.size > 0 && Array.from(selectedCells).some(c => 
         c.hasAttribute('data-merged') || c.hasAttribute('data-merged-into')
@@ -4269,6 +4419,10 @@ function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
     
     // Zusammenführen-Button (wenn mehrere Zellen markiert sind ODER ein zusammengeführtes Feld + weitere Zellen)
     if (selectedCells.size > 1 || (hasMergedCell && !allMergedCells)) {
+        const separator2 = document.createElement('hr');
+        separator2.style.cssText = 'margin: 10px 0; border: none; border-top: 1px solid #ddd;';
+        menu.appendChild(separator2);
+        
         const mergeBtn = document.createElement('button');
         mergeBtn.textContent = 'Zusammenführen';
         mergeBtn.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 5px 0; background: #28a745; color: white; border: none; border-radius: 3px;';

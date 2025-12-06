@@ -14,22 +14,40 @@
     <script>
         // Überprüfe, ob der Benutzer eingeloggt ist
         window.onload = function() {
-            const currentUser = JSON.parse(localStorage.getItem('currentUser'));
-            if (!currentUser) {
-                window.location.href = 'login.html';
-            } else {
-                // Stelle sicher, dass Firebase Auth aktiv ist (für Security Rules)
-                if (typeof firebase !== 'undefined' && firebase.auth) {
-                    // Prüfe, ob bereits authentifiziert
-                    firebase.auth().onAuthStateChanged(function(authUser) {
-                        if (!authUser) {
-                            // Versuche anonyme Authentifizierung für Security Rules
-                            firebase.auth().signInAnonymously().catch(function(error) {
-                                console.warn('Anonyme Authentifizierung fehlgeschlagen:', error);
+            // Warte auf Firebase Auth
+            if (typeof firebase !== 'undefined' && firebase.auth) {
+                firebase.auth().onAuthStateChanged(function(authUser) {
+                    if (!authUser) {
+                        // Benutzer nicht authentifiziert, leite zur Login-Seite weiter
+                        console.log('Benutzer nicht authentifiziert, leite zur Login-Seite weiter');
+                        window.location.href = 'login.html';
+                    } else {
+                        // Prüfe, ob E-Mail verifiziert ist und Domain korrekt ist
+                        if (!authUser.emailVerified) {
+                            console.log('E-Mail nicht verifiziert');
+                            firebase.auth().signOut().then(() => {
+                                window.location.href = 'login.html';
                             });
+                        } else if (!authUser.email || !authUser.email.endsWith('@knoebel-fliesen.de')) {
+                            console.log('E-Mail-Domain nicht erlaubt');
+                            firebase.auth().signOut().then(() => {
+                                window.location.href = 'login.html';
+                            });
+                        } else {
+                            console.log('Benutzer authentifiziert:', authUser.email);
+                            // Speichere Benutzerinformationen im localStorage für Kompatibilität
+                            localStorage.setItem('currentUser', JSON.stringify({
+                                email: authUser.email,
+                                uid: authUser.uid,
+                                emailVerified: authUser.emailVerified
+                            }));
                         }
-                    });
-                }
+                    }
+                });
+            } else {
+                // Firebase Auth nicht verfügbar, leite zur Login-Seite weiter
+                console.warn('Firebase Auth nicht verfügbar');
+                window.location.href = 'login.html';
             }
         }
     </script>

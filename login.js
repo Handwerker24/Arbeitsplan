@@ -1,74 +1,65 @@
 // Firebase wird bereits in firebase-simple.js initialisiert
 // Verwende die globale Firebase-Instanz direkt
 
-// Stelle sicher, dass der Benutzer authentifiziert ist (für Security Rules)
-async function ensureAuthenticated() {
-    if (typeof firebase === 'undefined' || !firebase.auth) {
-        console.error('Firebase Auth nicht verfügbar');
-        return false;
+// Funktion zum erneuten Senden der Verifizierungs-E-Mail
+async function resendVerificationEmail(email, password, button) {
+    const verificationSuccess = document.getElementById('verificationSuccess');
+    const errorMessage = document.getElementById('errorMessage');
+    
+    // Deaktiviere Button während des Sendens
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Wird gesendet...';
     }
     
     try {
-        // Prüfe, ob bereits authentifiziert
-        const currentUser = firebase.auth().currentUser;
-        if (currentUser) {
-            console.log('Bereits authentifiziert');
-            return true;
+        // Melde den Benutzer erneut an (da wir vorher signOut aufgerufen haben)
+        const userCredential = await firebase.auth().signInWithEmailAndPassword(email, password);
+        const user = userCredential.user;
+        
+        // Sende Verifizierungs-E-Mail
+        await user.sendEmailVerification();
+        
+        // Zeige Erfolgsmeldung
+        if (verificationSuccess) {
+            verificationSuccess.textContent = 'Eine Verifizierungs-E-Mail wurde an ' + email + ' gesendet. Bitte prüfen Sie Ihr Postfach.';
+            verificationSuccess.style.display = 'block';
         }
         
-        // Versuche anonyme Authentifizierung
-        console.log('Versuche anonyme Authentifizierung...');
-        try {
-            await firebase.auth().signInAnonymously();
-            console.log('Anonyme Authentifizierung erfolgreich');
-            return true;
-        } catch (authError) {
-            // Wenn anonyme Auth nicht aktiviert ist, zeige Fehlermeldung
-            if (authError.code === 'auth/operation-not-allowed' || authError.code === 'auth/internal-error') {
-                console.error('FEHLER: Anonyme Authentifizierung ist nicht aktiviert!');
-                console.error('Bitte aktivieren Sie die anonyme Authentifizierung in Firebase:');
-                console.error('1. Öffnen Sie: https://console.firebase.google.com/');
-                console.error('2. Wählen Sie Projekt: arbeitsplan-f8b81');
-                console.error('3. Gehen Sie zu: Authentication → Sign-in method');
-                console.error('4. Aktivieren Sie "Anonymous"');
-                console.error('5. Klicken Sie auf "Save"');
-                alert('Anonyme Authentifizierung ist nicht aktiviert!\n\nBitte aktivieren Sie sie in der Firebase Console:\nAuthentication → Sign-in method → Anonymous aktivieren');
-            }
-            throw authError;
+        // Logge den Benutzer wieder aus (damit er sich nach Verifizierung erneut einloggen muss)
+        await firebase.auth().signOut();
+        
+        // Aktiviere Button wieder
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Verifizierungs-E-Mail erneut senden';
         }
+        
+        console.log('Verifizierungs-E-Mail erfolgreich gesendet an:', email);
+        
     } catch (error) {
-        console.error('Fehler bei Authentifizierung:', error);
-        return false;
-    }
-}
-
-// Lade Benutzer aus Firebase Realtime Database
-async function loadUsers() {
-    if (typeof firebase === 'undefined' || !firebase.database) {
-        console.error('Firebase nicht verfügbar');
-        return {};
-    }
-    
-    // Versuche zuerst mit Authentifizierung
-    let isAuthenticated = await ensureAuthenticated();
-    
-    // Wenn anonyme Auth fehlschlägt, versuche trotzdem zu laden
-    // (falls /users öffentlich lesbar ist oder Auth bereits aktiv ist)
-    try {
-        const db = firebase.database();
-        const snapshot = await db.ref('users').once('value');
-        const users = snapshot.val();
-        return users || {};
-    } catch (error) {
-        console.error('Fehler beim Laden der Benutzer:', error);
+        console.error('Fehler beim Senden der Verifizierungs-E-Mail:', error);
         
-        // Wenn Permission-Fehler und Auth fehlgeschlagen, zeige Hinweis
-        if (error.code === 'PERMISSION_DENIED' && !isAuthenticated) {
-            console.error('Hinweis: Anonyme Authentifizierung muss in Firebase aktiviert sein!');
-            console.error('Gehen Sie zu: Firebase Console → Authentication → Sign-in method → Anonymous aktivieren');
+        // Zeige Fehlermeldung
+        let errorText = 'Fehler beim Senden der Verifizierungs-E-Mail.';
+        if (error.code === 'auth/too-many-requests') {
+            errorText = 'Zu viele Anfragen. Bitte warten Sie einige Minuten, bevor Sie es erneut versuchen.';
+        } else if (error.code === 'auth/user-not-found') {
+            errorText = 'Benutzer nicht gefunden.';
+        } else {
+            errorText = 'Fehler: ' + (error.message || 'Unbekannter Fehler');
         }
         
-        return {};
+        if (errorMessage) {
+            errorMessage.textContent = errorText;
+            errorMessage.style.display = 'block';
+        }
+        
+        // Aktiviere Button wieder
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'Verifizierungs-E-Mail erneut senden';
+        }
     }
 }
 
@@ -76,7 +67,7 @@ async function loadUsers() {
 document.getElementById('loginForm').addEventListener('submit', async function(e) {
     e.preventDefault();
     
-    const username = document.getElementById('username').value;
+    const email = document.getElementById('email').value;
     const password = document.getElementById('password').value;
     const errorMessage = document.getElementById('errorMessage');
     const loginButton = document.getElementById('loginButton') || document.querySelector('button[type="submit"]');
@@ -87,8 +78,9 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
         loginButton.textContent = 'Lädt...';
     }
     
-    if (typeof firebase === 'undefined' || !firebase.database) {
-        errorMessage.textContent = 'Firebase nicht verfügbar';
+    // Prüfe, ob Firebase Auth verfügbar ist
+    if (typeof firebase === 'undefined' || !firebase.auth) {
+        errorMessage.textContent = 'Firebase Auth nicht verfügbar';
         errorMessage.style.display = 'block';
         if (loginButton) {
             loginButton.disabled = false;
@@ -98,27 +90,58 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
     }
     
     try {
-        // Lade Benutzer aus Firebase Realtime Database
-        console.log('Lade Benutzer aus Firebase...');
-        const users = await loadUsers();
-        console.log('Geladene Benutzer:', users);
-        console.log('Anzahl Benutzer:', Object.keys(users).length);
+        // Verwende Firebase Auth mit E-Mail und Passwort
+        console.log('Versuche Login mit E-Mail:', email);
         
-        // Suche nach Benutzer mit passendem Username
-        let foundUser = null;
-        for (const userId in users) {
-            const user = users[userId];
-            console.log('Prüfe Benutzer:', user.username, 'vs', username);
-            if (user.username === username) {
-                foundUser = { ...user, id: userId };
-                console.log('Benutzer gefunden:', foundUser);
-                break;
+        // Sign in mit E-Mail und Passwort (Firebase v8 Syntax)
+        const userCredential = await firebase.auth().signInWithEmailAndPassword(email, password);
+        
+        // Erfolgreich eingeloggt
+        const user = userCredential.user;
+        console.log('Erfolgreich eingeloggt als:', user.email);
+        
+        // Prüfe, ob die E-Mail verifiziert ist
+        if (!user.emailVerified) {
+            // Zeige Verifizierungs-Container mit Button zum erneuten Senden
+            const verificationContainer = document.getElementById('verificationContainer');
+            const resendButton = document.getElementById('resendVerificationButton');
+            const verificationSuccess = document.getElementById('verificationSuccess');
+            
+            // Verstecke Erfolgsmeldung falls vorhanden
+            if (verificationSuccess) {
+                verificationSuccess.style.display = 'none';
             }
+            
+            errorMessage.textContent = 'Bitte verifizieren Sie zuerst Ihre E-Mail-Adresse. Prüfen Sie Ihr Postfach.';
+            errorMessage.style.display = 'block';
+            
+            if (verificationContainer && resendButton) {
+                verificationContainer.style.display = 'block';
+                
+                // Event Listener für Button zum erneuten Senden
+                // Entferne alte Event Listener falls vorhanden
+                const newResendButton = resendButton.cloneNode(true);
+                resendButton.parentNode.replaceChild(newResendButton, resendButton);
+                
+                newResendButton.addEventListener('click', async function() {
+                    await resendVerificationEmail(email, password, newResendButton);
+                });
+            }
+            
+            // Melde den Benutzer aus (damit er sich nach Verifizierung erneut einloggen muss)
+            await firebase.auth().signOut();
+            
+            if (loginButton) {
+                loginButton.disabled = false;
+                loginButton.textContent = 'Anmelden';
+            }
+            return;
         }
         
-        if (!foundUser) {
-            console.log('Benutzer nicht gefunden für Username:', username);
-            errorMessage.textContent = 'Ungültiger Benutzername oder Passwort';
+        // Prüfe, ob die E-Mail-Domain korrekt ist
+        if (!user.email || !user.email.endsWith('@knoebel-fliesen.de')) {
+            await firebase.auth().signOut();
+            errorMessage.textContent = 'Nur E-Mail-Adressen von @knoebel-fliesen.de sind erlaubt.';
             errorMessage.style.display = 'block';
             if (loginButton) {
                 loginButton.disabled = false;
@@ -127,49 +150,67 @@ document.getElementById('loginForm').addEventListener('submit', async function(e
             return;
         }
         
-        // Überprüfe die Anmeldedaten
-        console.log('Prüfe Passwort...', foundUser.password, 'vs', password);
-        if (foundUser.password === password) {
-            console.log('Erfolgreich eingeloggt:', foundUser.username);
-            
-            // Speichere die Benutzerinformationen im localStorage
-            localStorage.setItem('currentUser', JSON.stringify({
-                username: foundUser.username,
-                name: foundUser.name,
-                role: foundUser.role || 'user',
-                id: foundUser.id,
-                createdAt: foundUser.createdAt
-            }));
-            
-            // Versuche anonyme Authentifizierung für Security Rules
-            try {
-                if (firebase.auth) {
-                    await firebase.auth().signInAnonymously();
-                    console.log('Anonyme Authentifizierung erfolgreich');
-                }
-            } catch (authError) {
-                console.warn('Anonyme Authentifizierung fehlgeschlagen:', authError);
-                // Weiterleiten trotzdem, da localStorage-Benutzer gespeichert wurde
-            }
-            
-            // Warte kurz, damit localStorage gespeichert wird
-            await new Promise(resolve => setTimeout(resolve, 100));
-            
-            // Leite zur Hauptseite weiter
-            window.location.href = 'index.html';
-        } else {
-            // Zeige Fehlermeldung
-            errorMessage.textContent = 'Ungültiger Benutzername oder Passwort';
-            errorMessage.style.display = 'block';
-            
-            if (loginButton) {
-                loginButton.disabled = false;
-                loginButton.textContent = 'Anmelden';
-            }
-        }
+        // Speichere die Benutzerinformationen im localStorage
+        localStorage.setItem('currentUser', JSON.stringify({
+            email: user.email,
+            uid: user.uid,
+            emailVerified: user.emailVerified
+        }));
+        
+        // Warte kurz, damit localStorage gespeichert wird
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Leite zur Hauptseite weiter
+        window.location.href = 'index.html';
+        
     } catch (error) {
         console.error('Fehler beim Login:', error);
-        errorMessage.textContent = 'Fehler beim Verbinden mit dem Server: ' + error.message;
+        
+        // Verstecke Verifizierungs-Container falls sichtbar
+        const verificationContainer = document.getElementById('verificationContainer');
+        if (verificationContainer) {
+            verificationContainer.style.display = 'none';
+        }
+        
+        // Zeige benutzerfreundliche Fehlermeldungen
+        let errorText = 'Login fehlgeschlagen';
+        
+        // Prüfe auf INVALID_LOGIN_CREDENTIALS (kann in verschiedenen Fehlercodes auftreten)
+        const errorMessageStr = error.message || '';
+        const isInvalidCredentials = error.code === 'auth/user-not-found' || 
+                                     error.code === 'auth/wrong-password' ||
+                                     error.code === 'auth/invalid-credential' ||
+                                     error.code === 'auth/internal-error' && 
+                                     (errorMessageStr.includes('INVALID_LOGIN_CREDENTIALS') || 
+                                      errorMessageStr.includes('INVALID_CREDENTIAL'));
+        
+        if (isInvalidCredentials) {
+            errorText = 'Ungültige E-Mail-Adresse oder Passwort. Bitte überprüfen Sie Ihre Anmeldedaten.';
+        } else if (error.code === 'auth/user-not-found') {
+            errorText = 'Kein Benutzer mit dieser E-Mail-Adresse gefunden.';
+        } else if (error.code === 'auth/wrong-password') {
+            errorText = 'Falsches Passwort.';
+        } else if (error.code === 'auth/invalid-email') {
+            errorText = 'Ungültige E-Mail-Adresse.';
+        } else if (error.code === 'auth/user-disabled') {
+            errorText = 'Dieser Benutzer wurde deaktiviert.';
+        } else if (error.code === 'auth/too-many-requests') {
+            errorText = 'Zu viele fehlgeschlagene Versuche. Bitte warten Sie einige Minuten, bevor Sie es erneut versuchen.';
+        } else if (error.code === 'auth/network-request-failed') {
+            errorText = 'Netzwerkfehler. Bitte überprüfen Sie Ihre Internetverbindung.';
+        } else if (error.code === 'auth/invalid-credential') {
+            errorText = 'Ungültige Anmeldedaten. Bitte überprüfen Sie E-Mail und Passwort.';
+        } else {
+            // Versuche, eine sinnvolle Fehlermeldung aus der Error-Message zu extrahieren
+            if (errorMessageStr.includes('INVALID_LOGIN_CREDENTIALS') || 
+                errorMessageStr.includes('INVALID_CREDENTIAL')) {
+                errorText = 'Ungültige E-Mail-Adresse oder Passwort. Bitte überprüfen Sie Ihre Anmeldedaten.';
+            } else {
+                errorText = 'Login fehlgeschlagen: ' + (error.message || 'Unbekannter Fehler');
+            }
+        }
+        
+        errorMessage.textContent = errorText;
         errorMessage.style.display = 'block';
         
         if (loginButton) {
