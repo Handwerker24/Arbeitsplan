@@ -1018,6 +1018,8 @@ function restoreMergedCells() {
         const spanCount = mergeData.mergedCells ? mergeData.mergedCells.length : 1;
         
         // Warte kurz, damit die Zellen gerendert sind
+        // WICHTIG: Für Wochenansicht müssen wir länger warten, damit alle Zellen erstellt sind
+        const timeoutDelay = isWeekView ? 150 : 100;
         setTimeout(() => {
             // Berechne die Gesamtbreite aus allen zusammengeführten Zellen
             let totalWidth = 0;
@@ -1057,13 +1059,17 @@ function restoreMergedCells() {
             console.log('Wiederherstelle Zusammenführung:', { spanCount });
             
             // Entferne vorhandene Zellen, die Teil der Zusammenführung sein sollten
+            // WICHTIG: Hole allCells neu, da sich die Liste nach dem Entfernen ändert
             const cellsToRemove = [];
             if (mergeData.mergedCells && mergeData.mergedCells.length > 1) {
+                // Hole alle Zellen der Zeile neu, da sich die Liste ändern könnte
+                const currentRowCells = Array.from(targetRow.children);
+                
                 for (let i = 1; i < mergeData.mergedCells.length; i++) {
                     const dateKey = mergeData.mergedCells[i];
-                    const cellToRemove = allCells.find(c => {
+                    const cellToRemove = currentRowCells.find(c => {
                         const cellDateKey = c.getAttribute('data-date');
-                        return cellDateKey === dateKey && !c.hasAttribute('data-merged');
+                        return cellDateKey === dateKey && !c.hasAttribute('data-merged') && c !== firstCell;
                     });
                     if (cellToRemove) {
                         cellsToRemove.push(cellToRemove);
@@ -1072,7 +1078,11 @@ function restoreMergedCells() {
             }
             
             // Entferne die Zellen
-            cellsToRemove.forEach(cell => cell.remove());
+            cellsToRemove.forEach(cell => {
+                if (cell && cell.parentElement) {
+                    cell.remove();
+                }
+            });
             
             // Setze colspan auf die erste Zelle
             firstCell.setAttribute('colspan', spanCount);
@@ -1083,20 +1093,20 @@ function restoreMergedCells() {
             // Hole den Text aus der ersten Zelle oder aus assignments
             const firstNoteKey = `${employee}-${firstDateKey}`;
             const firstAssignment = assignments[employee]?.[firstDateKey];
+            const finalText = firstAssignment?.text || cellNotes[firstNoteKey] || '';
             const cellText = firstCell.querySelector('.cell-text');
             
             // Wenn es einen Text gibt, stelle sicher, dass er angezeigt wird
-            if (firstAssignment?.text || cellNotes[firstNoteKey]) {
-                const textToShow = firstAssignment?.text || cellNotes[firstNoteKey] || '';
+            if (finalText) {
                 if (cellText) {
-                    cellText.textContent = textToShow;
+                    cellText.textContent = finalText;
                 } else {
                     // Erstelle cell-text falls nicht vorhanden
                     const cellContent = firstCell.querySelector('.cell-content') || document.createElement('div');
                     cellContent.className = 'cell-content';
                     const newCellText = document.createElement('div');
                     newCellText.className = 'cell-text';
-                    newCellText.textContent = textToShow;
+                    newCellText.textContent = finalText;
                     cellContent.appendChild(newCellText);
                     if (!firstCell.querySelector('.cell-content')) {
                         firstCell.appendChild(cellContent);
@@ -1126,12 +1136,11 @@ function restoreMergedCells() {
             // WICHTIG: Für Wochenansicht - stelle sicher, dass der Text korrekt angezeigt wird
             // Hole den Text erneut nach updateCell, da updateCell den Text möglicherweise überschreibt
             // ABER: Nur wenn die Zelle zusammengeführt ist
-            if (firstCell.hasAttribute('data-merged')) {
+            if (firstCell.hasAttribute('data-merged') && finalText) {
                 const updatedCellText = firstCell.querySelector('.cell-text');
-                const finalText = firstAssignment?.text || cellNotes[firstNoteKey] || '';
-                if (updatedCellText && finalText) {
+                if (updatedCellText) {
                     updatedCellText.textContent = finalText;
-                } else if (finalText) {
+                } else {
                     // Erstelle cell-text falls nicht vorhanden
                     const cellContent = firstCell.querySelector('.cell-content') || document.createElement('div');
                     cellContent.className = 'cell-content';
@@ -1146,7 +1155,7 @@ function restoreMergedCells() {
             }
             
             console.log('Zusammenführung wiederhergestellt - Text:', finalText, 'spanCount:', spanCount, 'mergedCells:', mergeData.mergedCells);
-        }, 100);
+        }, timeoutDelay);
         
         console.log('Zusammenführung wiederhergestellt für:', mergeKey);
     });
@@ -1937,7 +1946,11 @@ function showCurrentWeek() {
     });
     
     // Stelle zusammengeführte Zellen wieder her (nachdem alle Zellen erstellt wurden)
-    setTimeout(() => restoreMergedCells(), 200);
+    // WICHTIG: Warte länger, damit alle Zellen vollständig gerendert sind
+    setTimeout(() => {
+        console.log('showCurrentWeek: Rufe restoreMergedCells auf');
+        restoreMergedCells();
+    }, 300);
 }
 
 function navigateWeek(direction) {
