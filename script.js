@@ -1066,6 +1066,12 @@ function restoreMergedCells() {
             if (mergeData.mergedCells && mergeData.mergedCells.length > 1) {
                 // Hole alle Zellen der Zeile neu, da sich die Liste ändern könnte
                 const currentRowCells = Array.from(targetRow.children);
+                console.log('restoreMergedCells: Suche Zellen zum Entfernen. mergeData.mergedCells:', mergeData.mergedCells);
+                console.log('restoreMergedCells: Aktuelle Zellen in Zeile:', currentRowCells.map(c => ({
+                    dateKey: c.getAttribute('data-date'),
+                    hasDataMerged: c.hasAttribute('data-merged'),
+                    isFirstCell: c === firstCell
+                })));
                 
                 for (let i = 1; i < mergeData.mergedCells.length; i++) {
                     const dateKey = mergeData.mergedCells[i];
@@ -1074,14 +1080,20 @@ function restoreMergedCells() {
                         return cellDateKey === dateKey && !c.hasAttribute('data-merged') && c !== firstCell;
                     });
                     if (cellToRemove) {
+                        console.log('restoreMergedCells: Zelle gefunden zum Entfernen:', dateKey);
                         cellsToRemove.push(cellToRemove);
+                    } else {
+                        console.warn('restoreMergedCells: Zelle NICHT gefunden zum Entfernen:', dateKey);
                     }
                 }
             }
             
+            console.log('restoreMergedCells: Entferne', cellsToRemove.length, 'Zellen');
+            
             // Entferne die Zellen
             cellsToRemove.forEach(cell => {
                 if (cell && cell.parentElement) {
+                    console.log('restoreMergedCells: Entferne Zelle:', cell.getAttribute('data-date'));
                     cell.remove();
                 }
             });
@@ -1095,6 +1107,12 @@ function restoreMergedCells() {
             // DEBUG: Prüfe, ob colspan gesetzt wurde
             const actualColspan = firstCell.getAttribute('colspan');
             console.log('restoreMergedCells: colspan gesetzt:', actualColspan, 'erwartet:', spanCount);
+            console.log('restoreMergedCells: firstCell nach colspan:', {
+                colspan: firstCell.getAttribute('colspan'),
+                dataMerged: firstCell.hasAttribute('data-merged'),
+                dateKey: firstCell.getAttribute('data-date'),
+                text: firstCell.textContent
+            });
             
             // WICHTIG: Für Wochenansicht - stelle sicher, dass der Text korrekt angezeigt wird
             // Hole den Text aus der ersten Zelle oder aus assignments
@@ -1133,11 +1151,19 @@ function restoreMergedCells() {
             // WICHTIG: Rufe updateCell auf, um Farben, Text, etc. zu setzen
             // updateCell entfernt colspan nicht, wenn data-merged bereits gesetzt ist
             const savedColspan = firstCell.getAttribute('colspan');
+            console.log('restoreMergedCells: Rufe updateCell auf für', firstDateKey, 'savedColspan:', savedColspan);
             updateCell(firstCell, employee, firstDateKey);
             
             // Stelle sicher, dass colspan erhalten bleibt (falls updateCell es entfernt hat)
-            if (firstCell.hasAttribute('data-merged') && savedColspan) {
-                firstCell.setAttribute('colspan', savedColspan);
+            if (firstCell.hasAttribute('data-merged')) {
+                if (savedColspan) {
+                    firstCell.setAttribute('colspan', savedColspan);
+                    console.log('restoreMergedCells: colspan wiederhergestellt:', savedColspan);
+                } else {
+                    // Falls savedColspan nicht gesetzt war, setze es auf spanCount
+                    firstCell.setAttribute('colspan', spanCount);
+                    console.log('restoreMergedCells: colspan neu gesetzt:', spanCount);
+                }
                 
                 // Stelle sicher, dass der Text angezeigt wird
                 if (finalText) {
@@ -1157,6 +1183,14 @@ function restoreMergedCells() {
                         }
                     }
                 }
+                
+                // DEBUG: Prüfe finalen Zustand
+                console.log('restoreMergedCells: Finaler Zustand:', {
+                    colspan: firstCell.getAttribute('colspan'),
+                    dataMerged: firstCell.hasAttribute('data-merged'),
+                    text: firstCell.textContent,
+                    cellText: firstCell.querySelector('.cell-text')?.textContent
+                });
             }
             
             console.log('Zusammenführung wiederhergestellt - Text:', finalText, 'spanCount:', spanCount, 'mergedCells:', mergeData.mergedCells);
