@@ -853,9 +853,7 @@ td:first-child {
         -ms-user-select: none;
         user-select: none;
         -webkit-touch-callout: none; /* Deaktiviert das iOS-Kontextmenü */
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        vertical-align: middle;
     }
     
     .cell-content {
@@ -866,15 +864,13 @@ td:first-child {
         height: 100%;
         width: 100%;
         gap: 2px;
+        min-height: 100%;
     }
     
     .cell-text {
         font-size: 0.7em;
         line-height: 1.2;
         text-align: center;
-        display: flex;
-        align-items: center;
-        justify-content: center;
     }
     
     .name-container {
