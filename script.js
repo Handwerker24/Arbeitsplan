@@ -1545,22 +1545,36 @@ function setupDesktopMonthView() {
                     
                     // Touch-Drag für Mehrfachauswahl - aktiviere automatisch den Auswahlmodus
                     if (touchStartCell) {
-                        // Verhindere Scrollen beim Markieren
-                        e.preventDefault();
-                        
                         const touch = e.touches[0];
-                        const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
-                        const targetCell = elementBelow?.closest('.calendar-cell');
-                        if (targetCell && targetCell !== touchStartCell) {
-                            // Aktiviere Auswahlmodus, wenn noch nicht aktiv
-                            if (!isSelecting) {
-                                isSelecting = true;
-                                // Markiere die Startzelle, wenn sie noch nicht markiert ist
-                                if (!touchStartCell.classList.contains('selected')) {
-                                    toggleCellSelection(touchStartCell);
+                        
+                        // Berechne Bewegungsrichtung
+                        const startX = touchStartCell.getBoundingClientRect().left + touchStartCell.getBoundingClientRect().width / 2;
+                        const startY = touchStartCell.getBoundingClientRect().top + touchStartCell.getBoundingClientRect().height / 2;
+                        const deltaX = Math.abs(touch.clientX - startX);
+                        const deltaY = Math.abs(touch.clientY - startY);
+                        
+                        // Wenn Bewegung hauptsächlich horizontal ist (> 30px horizontal und horizontal > vertikal), markiere
+                        // Wenn Bewegung hauptsächlich vertikal ist (> 50px vertikal), erlaube Scrollen
+                        if (deltaX > 30 && deltaX > deltaY) {
+                            // Verhindere Scrollen beim Markieren (horizontale Bewegung)
+                            e.preventDefault();
+                            
+                            const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+                            const targetCell = elementBelow?.closest('.calendar-cell');
+                            if (targetCell && targetCell !== touchStartCell) {
+                                // Aktiviere Auswahlmodus, wenn noch nicht aktiv
+                                if (!isSelecting) {
+                                    isSelecting = true;
+                                    // Markiere die Startzelle, wenn sie noch nicht markiert ist
+                                    if (!touchStartCell.classList.contains('selected')) {
+                                        toggleCellSelection(touchStartCell);
+                                    }
                                 }
+                                selectCellsBetween(touchStartCell, targetCell);
                             }
-                            selectCellsBetween(touchStartCell, targetCell);
+                        } else if (deltaY > 50 && deltaY > deltaX) {
+                            // Vertikale Bewegung - erlaube Scrollen, beende Markierung
+                            isSelecting = false;
                         }
                     }
                 }, { passive: false });
@@ -1790,22 +1804,36 @@ function showCurrentWeek() {
                 
                 // Touch-Drag für Mehrfachauswahl - aktiviere automatisch den Auswahlmodus
                 if (touchStartCell) {
-                    // Verhindere Scrollen beim Markieren
-                    e.preventDefault();
-                    
                     const touch = e.touches[0];
-                    const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
-                    const targetCell = elementBelow?.closest('.calendar-cell');
-                    if (targetCell && targetCell !== touchStartCell) {
-                        // Aktiviere Auswahlmodus, wenn noch nicht aktiv
-                        if (!isSelecting) {
-                            isSelecting = true;
-                            // Markiere die Startzelle, wenn sie noch nicht markiert ist
-                            if (!touchStartCell.classList.contains('selected')) {
-                                toggleCellSelection(touchStartCell);
+                    
+                    // Berechne Bewegungsrichtung
+                    const startX = touchStartCell.getBoundingClientRect().left + touchStartCell.getBoundingClientRect().width / 2;
+                    const startY = touchStartCell.getBoundingClientRect().top + touchStartCell.getBoundingClientRect().height / 2;
+                    const deltaX = Math.abs(touch.clientX - startX);
+                    const deltaY = Math.abs(touch.clientY - startY);
+                    
+                    // Wenn Bewegung hauptsächlich horizontal ist (> 30px horizontal und horizontal > vertikal), markiere
+                    // Wenn Bewegung hauptsächlich vertikal ist (> 50px vertikal), erlaube Scrollen
+                    if (deltaX > 30 && deltaX > deltaY) {
+                        // Verhindere Scrollen beim Markieren (horizontale Bewegung)
+                        e.preventDefault();
+                        
+                        const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+                        const targetCell = elementBelow?.closest('.calendar-cell');
+                        if (targetCell && targetCell !== touchStartCell) {
+                            // Aktiviere Auswahlmodus, wenn noch nicht aktiv
+                            if (!isSelecting) {
+                                isSelecting = true;
+                                // Markiere die Startzelle, wenn sie noch nicht markiert ist
+                                if (!touchStartCell.classList.contains('selected')) {
+                                    toggleCellSelection(touchStartCell);
+                                }
                             }
+                            selectCellsBetween(touchStartCell, targetCell);
                         }
-                        selectCellsBetween(touchStartCell, targetCell);
+                    } else if (deltaY > 50 && deltaY > deltaX) {
+                        // Vertikale Bewegung - erlaube Scrollen, beende Markierung
+                        isSelecting = false;
                     }
                 }
             }, { passive: false });
@@ -2042,12 +2070,26 @@ async function applyStatusToSelectedCells(status) {
         await saveData('cellHighlights', cellHighlights);
     }
     
-    // Verarbeite alle Zellen
-    for (const cell of selectedCells) {
+    // Verarbeite alle Zellen - konvertiere zu Array, um sicherzustellen, dass alle erfasst werden
+    const cellsToProcess = Array.from(selectedCells);
+    console.log('Verarbeite Status für', cellsToProcess.length, 'Zellen');
+    
+    for (const cell of cellsToProcess) {
+        if (!cell || !cell.parentElement) continue;
+        
         const row = cell.parentElement;
-        const employee = row.querySelector('td:first-child span').textContent;
+        const employeeElement = row.querySelector('td:first-child span');
+        if (!employeeElement) continue;
+        
+        const employee = employeeElement.textContent;
         const dateKey = getDateKeyFromCell(cell);
-        if (!dateKey) continue;
+        
+        if (!dateKey) {
+            console.warn('Kein dateKey für Zelle gefunden:', cell);
+            continue;
+        }
+        
+        console.log('Verarbeite Zelle:', employee, dateKey);
         
         if (!assignments[employee]) {
             assignments[employee] = {};
@@ -3732,13 +3774,24 @@ async function mergeSelectedCells() {
     // Finde alle Zellen im DOM, die zu den erweiterten dateKeys gehören
     // Dies ist wichtig, um auch Zellen zu finden, die noch nicht zusammengeführt wurden
     // WICHTIG: Füge auch alle Zellen aus selectedCells hinzu, um sicherzustellen, dass alle markierten Zellen erfasst werden
-    selectedCells.forEach(cell => {
+    // WICHTIG: Konvertiere zu Array, um sicherzustellen, dass alle Zellen erfasst werden
+    const selectedCellsArray = Array.from(selectedCells);
+    console.log('Zusammenführung - Anzahl markierter Zellen:', selectedCellsArray.length);
+    
+    selectedCellsArray.forEach(cell => {
+        if (!cell) return;
+        
         const dateKey = getDateKeyFromCell(cell);
         if (dateKey) {
             expandedDateKeys.add(dateKey);
             expandedCells.add(cell);
+            console.log('Zelle hinzugefügt:', dateKey);
+        } else {
+            console.warn('Kein dateKey für Zelle gefunden beim Zusammenführen:', cell);
         }
     });
+    
+    console.log('Zusammenführung - expandedDateKeys nach selectedCells:', Array.from(expandedDateKeys));
     
     const allRows = document.querySelectorAll('tbody tr');
     allRows.forEach(row => {
@@ -4583,7 +4636,54 @@ function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
         const clearSelectionBtn = document.createElement('button');
         clearSelectionBtn.textContent = 'Auswahl löschen';
         clearSelectionBtn.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 5px 0; background: #dc3545; color: white; border: none; border-radius: 3px;';
-        clearSelectionBtn.addEventListener('click', () => {
+        clearSelectionBtn.addEventListener('click', async () => {
+            // Lösche alle markierten Felder (wie Entf-Taste)
+            if (selectedCells.size > 0) {
+                saveState(); // Speichere den aktuellen Zustand vor dem Löschen
+                
+                for (const cell of selectedCells) {
+                    const row = cell.parentElement;
+                    const employee = row.querySelector('td:first-child span')?.textContent;
+                    const dateKey = getDateKeyFromCell(cell);
+                    if (!dateKey) continue;
+                    
+                    const noteKey = `${employee}-${dateKey}`;
+                    const linkKey = `${employee}-${dateKey}-link`;
+                    const addressKey = `${employee}-${dateKey}-address`;
+                    
+                    // Lösche alle Daten
+                    if (assignments[employee]) {
+                        delete assignments[employee][dateKey];
+                    }
+                    delete cellNotes[noteKey];
+                    delete cellLinks[linkKey];
+                    delete cellAddresses[addressKey];
+                    
+                    // Setze Zelle zurück
+                    cell.innerHTML = '<div class="cell-content"><div class="cell-text"></div></div>';
+                    cell.style.backgroundColor = '';
+                    cell.style.color = 'black';
+                    cell.removeAttribute('data-info');
+                    cell.className = 'calendar-cell';
+                    
+                    // Prüfe Wochenende basierend auf dem tatsächlichen Datum
+                    const [year, month, day] = dateKey.split('-').map(Number);
+                    const date = new Date(year, month - 1, day);
+                    if (date.getDay() === 0 || date.getDay() === 6) {
+                        cell.classList.add('weekend-cell');
+                    }
+                    
+                    // Aktualisiere die Zelle
+                    updateCell(cell, employee, dateKey);
+                }
+                
+                // Speichere die Änderungen in Firebase
+                await saveData('assignments', assignments);
+                await saveData('cellNotes', cellNotes);
+                await saveData('cellLinks', cellLinks);
+                await saveData('cellAddresses', cellAddresses);
+            }
+            
             clearSelection();
             menu.remove();
         });
