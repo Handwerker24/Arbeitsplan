@@ -1545,6 +1545,9 @@ function setupDesktopMonthView() {
                     
                     // Touch-Drag für Mehrfachauswahl - aktiviere automatisch den Auswahlmodus
                     if (touchStartCell) {
+                        // Verhindere Scrollen beim Markieren
+                        e.preventDefault();
+                        
                         const touch = e.touches[0];
                         const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
                         const targetCell = elementBelow?.closest('.calendar-cell');
@@ -1560,7 +1563,7 @@ function setupDesktopMonthView() {
                             selectCellsBetween(touchStartCell, targetCell);
                         }
                     }
-                });
+                }, { passive: false });
                 
                 cell.addEventListener('touchend', (e) => {
                     if (longPressTimer) {
@@ -1787,6 +1790,9 @@ function showCurrentWeek() {
                 
                 // Touch-Drag für Mehrfachauswahl - aktiviere automatisch den Auswahlmodus
                 if (touchStartCell) {
+                    // Verhindere Scrollen beim Markieren
+                    e.preventDefault();
+                    
                     const touch = e.touches[0];
                     const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
                     const targetCell = elementBelow?.closest('.calendar-cell');
@@ -1802,7 +1808,7 @@ function showCurrentWeek() {
                         selectCellsBetween(touchStartCell, targetCell);
                     }
                 }
-            });
+            }, { passive: false });
             
             cell.addEventListener('touchend', (e) => {
                 if (longPressTimer) {
@@ -4063,15 +4069,36 @@ async function mergeSelectedCells() {
     
     // Entferne die anderen Zellen aus dem DOM
     // WICHTIG: Entferne alle Zellen, die in mergedCellIds sind, außer der ersten
+    // WICHTIG: Durchlaufe alle Zellen in der Zeile, um sicherzustellen, dass auch das letzte Feld erfasst wird
     const removedCells = [];
+    const allRowCells = Array.from(row.children);
+    
     for (let i = 1; i < mergedCellIds.length; i++) {
         const dateKey = mergedCellIds[i];
         
-        // Finde die Zelle im DOM
-        const cell = Array.from(row.children).find(c => {
+        // Finde die Zelle im DOM - suche in allen Zellen der Zeile
+        let cell = allRowCells.find(c => {
             const cellDateKey = c.getAttribute('data-date');
             return cellDateKey === dateKey && !c.hasAttribute('data-merged');
         });
+        
+        // Falls nicht gefunden, könnte es eine zusammengeführte Zelle sein - suche auch in merged-hidden-cells
+        if (!cell) {
+            // Prüfe, ob es eine zusammengeführte Zelle ist, die bereits entfernt wurde
+            const mergedHiddenCells = firstCell.getAttribute('data-merged-hidden-cells');
+            if (mergedHiddenCells) {
+                try {
+                    const hiddenCells = JSON.parse(mergedHiddenCells);
+                    if (hiddenCells.includes(dateKey)) {
+                        // Zelle wurde bereits entfernt, füge sie zu removedCells hinzu
+                        removedCells.push({ dateKey, cell: null });
+                        continue;
+                    }
+                } catch (e) {
+                    console.error('Fehler beim Parsen von merged-hidden-cells:', e);
+                }
+            }
+        }
         
         if (cell) {
             // Entferne alle Daten aus den anderen Zellen
@@ -4094,6 +4121,11 @@ async function mergeSelectedCells() {
             removedCells.push({ dateKey, cell: null });
         }
     }
+    
+    // DEBUG: Logge alle mergedCellIds und removedCells
+    console.log('Zusammenführung - mergedCellIds:', mergedCellIds);
+    console.log('Zusammenführung - removedCells:', removedCells.map(c => c.dateKey));
+    console.log('Zusammenführung - spanCount:', spanCount, 'mergedCellIds.length:', mergedCellIds.length);
     
     // Speichere die entfernten Zellen
     firstCell.setAttribute('data-merged-hidden-cells', JSON.stringify(removedCells.map(c => c.dateKey)));
@@ -4494,9 +4526,12 @@ function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
         statusBtn.textContent = text;
         statusBtn.style.cssText = `display: block; width: 100%; padding: 10px; margin: 5px 0; background: ${color}; color: ${status === 'abgerechnet' ? 'black' : 'white'}; border: none; border-radius: 3px;`;
         statusBtn.addEventListener('click', async () => {
-            // Markiere die Zelle für den Status
-            selectedCells.clear();
-            selectedCells.add(cell);
+            // Wenn keine Zellen markiert sind, markiere nur diese Zelle
+            // Wenn bereits Zellen markiert sind, behalte die Auswahl und wende Status auf alle an
+            if (selectedCells.size === 0) {
+                selectedCells.add(cell);
+            }
+            // Wende Status auf alle markierten Zellen an
             await applyStatusToSelectedCells(status);
             menu.remove();
         });

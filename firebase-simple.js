@@ -26,6 +26,25 @@ try {
         }
         database = firebase.database();
         auth = firebase.auth();
+        
+        // Firebase App Check aktivieren (nach der Initialisierung)
+        if (firebase.appCheck) {
+            try {
+                // ReCaptcha Public Key für App Check
+                const RECAPTCHA_PUBLIC_KEY = '6Lf9OSMsAAAAAFrG8oyj-8PLZMzqt-HlJE-runxg';
+                
+                // Aktiviere App Check mit ReCaptcha v3
+                firebase.appCheck().activate(RECAPTCHA_PUBLIC_KEY, {
+                    isTokenAutoRefreshEnabled: true
+                });
+                console.log('Firebase App Check erfolgreich aktiviert');
+            } catch (appCheckError) {
+                console.warn('Firebase App Check konnte nicht aktiviert werden:', appCheckError);
+                console.warn('Hinweis: Stelle sicher, dass der ReCaptcha Public Key korrekt ist und App Check in Firebase Console aktiviert wurde.');
+            }
+        } else {
+            console.warn('Firebase App Check SDK nicht geladen');
+        }
     } else {
         console.error('Firebase SDK nicht geladen');
     }
