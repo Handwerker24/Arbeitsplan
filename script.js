@@ -574,6 +574,7 @@ document.addEventListener('keydown', async (e) => {
         const noteKey = `${employee}-${dateKey}`;
         const linkKey = `${employee}-${dateKey}-link`;
         const addressKey = `${employee}-${dateKey}-address`;
+        const highlightKey = `${employee}-${dateKey}`;
 
         // Extrahiere Status korrekt: zuerst aus assignments, dann aus CSS-Klassen
         const assignment = assignments[employee]?.[dateKey];
@@ -587,12 +588,16 @@ document.addEventListener('keydown', async (e) => {
             }
         }
 
+        // Kopiere auch die Farbmarkierung
+        const highlight = cellHighlights[highlightKey] || null;
+
         copiedContent = {
             text: firstCell.querySelector('.cell-text')?.textContent || '',
             status: status, // Kann null sein, aber nie undefined
             note: cellNotes[noteKey] || '',
             link: cellLinks[linkKey] || '',
-            address: cellAddresses[addressKey] || ''
+            address: cellAddresses[addressKey] || '',
+            highlight: highlight // Kopiere die Farbmarkierung
         };
     }
     
@@ -608,6 +613,7 @@ document.addEventListener('keydown', async (e) => {
             const noteKey = `${employee}-${dateKey}`;
             const linkKey = `${employee}-${dateKey}-link`;
             const addressKey = `${employee}-${dateKey}-address`;
+            const highlightKey = `${employee}-${dateKey}`;
             
             // Entferne colspan sofort, bevor wir etwas setzen
             cell.removeAttribute('colspan');
@@ -662,6 +668,14 @@ document.addEventListener('keydown', async (e) => {
                 cell.removeAttribute('data-info');
             }
             
+            // Setze die Farbmarkierung (wenn vorhanden)
+            if (copiedContent.highlight) {
+                cellHighlights[highlightKey] = JSON.parse(JSON.stringify(copiedContent.highlight));
+            } else {
+                // Entferne Farbmarkierung, wenn keine kopiert wurde
+                delete cellHighlights[highlightKey];
+            }
+            
             // Setze die Hintergrundfarbe und Textfarbe basierend auf dem Status
             const statusColors = {
                 'urlaub': '#28a745',
@@ -712,6 +726,7 @@ document.addEventListener('keydown', async (e) => {
         await saveData('cellNotes', cellNotes);
         await saveData('cellLinks', cellLinks);
         await saveData('cellAddresses', cellAddresses);
+        await saveData('cellHighlights', cellHighlights);
         await saveData('assignments', assignments);
     }
     
@@ -935,7 +950,9 @@ function restoreMergedCells() {
     
     // Bestimme den sichtbaren Datumsbereich
     let visibleStartDate, visibleEndDate;
+    console.log('restoreMergedCells: Prüfe isWeekView:', isWeekView, 'Typ:', typeof isWeekView);
     if (isWeekView) {
+        console.log('restoreMergedCells: WICHTIG - isWeekView ist true, verwende Wochenansicht');
         const monday = getCurrentWeek();
         console.log('restoreMergedCells: getCurrentWeek() zurückgegeben:', monday);
         visibleStartDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate());
@@ -943,6 +960,7 @@ function restoreMergedCells() {
         console.log('restoreMergedCells: Wochenansicht - Montag:', visibleStartDate.toISOString().split('T')[0], 'Sonntag:', visibleEndDate.toISOString().split('T')[0]);
         console.log('restoreMergedCells: visibleStartDate:', visibleStartDate, 'visibleEndDate:', visibleEndDate);
     } else {
+        console.log('restoreMergedCells: WICHTIG - isWeekView ist false, verwende Monatsansicht');
         const year = currentDate.getFullYear();
         const month = currentDate.getMonth();
         visibleStartDate = new Date(year, month, 1);
@@ -1190,21 +1208,24 @@ function restoreMergedCells() {
                 }
                 
                 // Stelle sicher, dass der Text angezeigt wird (aber nicht doppelt)
-                // WICHTIG: Entferne zuerst alle .cell-text Elemente und setze cell.textContent auf leer,
-                // um sicherzustellen, dass kein Text doppelt gesetzt wird
+                // WICHTIG: Entferne zuerst alle .cell-text Elemente, aber behalte .cell-content und .cell-icons
                 const allCellTexts = firstCell.querySelectorAll('.cell-text');
                 allCellTexts.forEach(textEl => textEl.remove());
-                firstCell.textContent = ''; // Leere den gesamten Text-Inhalt
+                
+                // Stelle sicher, dass cell-content existiert
+                let cellContent = firstCell.querySelector('.cell-content');
+                if (!cellContent) {
+                    cellContent = document.createElement('div');
+                    cellContent.className = 'cell-content';
+                    firstCell.appendChild(cellContent);
+                }
+                
+                // Entferne nur den Text-Inhalt, aber behalte die Struktur
+                // WICHTIG: Verwende innerHTML nicht, da es alle Elemente entfernt
+                // Stattdessen entfernen wir nur .cell-text Elemente (bereits oben gemacht)
                 
                 if (finalText) {
                     // Erstelle ein neues .cell-text Element
-                    let cellContent = firstCell.querySelector('.cell-content');
-                    if (!cellContent) {
-                        cellContent = document.createElement('div');
-                        cellContent.className = 'cell-content';
-                        firstCell.appendChild(cellContent);
-                    }
-                    
                     const newCellText = document.createElement('div');
                     newCellText.className = 'cell-text';
                     newCellText.textContent = finalText;
@@ -3543,6 +3564,48 @@ function updateCell(cell, employee, dateKey) {
             cellText.textContent = cellNotes[noteKey];
         }
         cell.setAttribute('data-info', cellNotes[noteKey]);
+    }
+    
+    // Stelle sicher, dass Icons (📁 und 🗺️) angezeigt werden, wenn Links oder Adressen vorhanden sind
+    // WICHTIG: Auch für zusammengelegte Felder, damit die Icons nach dem Laden angezeigt werden
+    let cellContent = cell.querySelector('.cell-content');
+    if (!cellContent) {
+        cellContent = document.createElement('div');
+        cellContent.className = 'cell-content';
+        cell.appendChild(cellContent);
+    }
+    
+    let cellIcons = cellContent.querySelector('.cell-icons');
+    if (cellLinks[linkKey] || cellAddresses[addressKey]) {
+        if (!cellIcons) {
+            cellIcons = document.createElement('div');
+            cellIcons.className = 'cell-icons';
+            cellContent.appendChild(cellIcons);
+        }
+        
+        // Entferne vorhandene Icons, um Duplikate zu vermeiden
+        cellIcons.innerHTML = '';
+        
+        // Füge 📁 Icon hinzu, wenn Link vorhanden ist
+        if (cellLinks[linkKey]) {
+            const folderIcon = document.createElement('div');
+            folderIcon.className = 'folder-icon';
+            folderIcon.textContent = '📁';
+            cellIcons.appendChild(folderIcon);
+        }
+        
+        // Füge 🗺️ Icon hinzu, wenn Adresse vorhanden ist
+        if (cellAddresses[addressKey]) {
+            const mapIcon = document.createElement('div');
+            mapIcon.className = 'map-icon';
+            mapIcon.textContent = '🗺️';
+            cellIcons.appendChild(mapIcon);
+        }
+    } else {
+        // Entferne Icons-Container, wenn keine Links oder Adressen vorhanden sind
+        if (cellIcons) {
+            cellIcons.remove();
+        }
     }
     
     // Stelle sicher, dass jedes Feld in seiner eigenen Zelle bleibt
