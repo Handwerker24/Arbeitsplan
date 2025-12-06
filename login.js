@@ -266,4 +266,5 @@ function setupLoginForm() {
             loginButton.textContent = 'Anmelden';
         }
     }
-}); 
+    });
+} 
