@@ -937,9 +937,11 @@ function restoreMergedCells() {
     let visibleStartDate, visibleEndDate;
     if (isWeekView) {
         const monday = getCurrentWeek();
+        console.log('restoreMergedCells: getCurrentWeek() zurückgegeben:', monday);
         visibleStartDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate());
         visibleEndDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
         console.log('restoreMergedCells: Wochenansicht - Montag:', visibleStartDate.toISOString().split('T')[0], 'Sonntag:', visibleEndDate.toISOString().split('T')[0]);
+        console.log('restoreMergedCells: visibleStartDate:', visibleStartDate, 'visibleEndDate:', visibleEndDate);
     } else {
         const year = currentDate.getFullYear();
         const month = currentDate.getMonth();
