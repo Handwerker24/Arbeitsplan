@@ -65,21 +65,39 @@ async function resendVerificationEmail(email, password, button) {
 
 // Event Listener für das Login-Formular
 // Warte, bis das DOM vollständig geladen ist
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
-        setupLoginForm();
-    });
-} else {
-    // DOM ist bereits geladen
-    setupLoginForm();
-}
+(function() {
+    function initLogin() {
+        // Warte zusätzlich kurz, um sicherzustellen, dass alle Scripts geladen sind
+        setTimeout(function() {
+            setupLoginForm();
+        }, 100);
+    }
+    
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initLogin);
+    } else {
+        // DOM ist bereits geladen
+        initLogin();
+    }
+})();
 
 function setupLoginForm() {
+    // Prüfe mehrfach, ob das Formular existiert (für langsame Verbindungen)
     const loginForm = document.getElementById('loginForm');
     if (!loginForm) {
-        console.error('Login-Formular nicht gefunden');
+        console.error('Login-Formular nicht gefunden, versuche es erneut...');
+        // Versuche es nach kurzer Verzögerung erneut
+        setTimeout(function() {
+            setupLoginForm();
+        }, 200);
         return;
     }
+    
+    // Prüfe, ob Event Listener bereits hinzugefügt wurde
+    if (loginForm.hasAttribute('data-listener-added')) {
+        return; // Bereits initialisiert
+    }
+    loginForm.setAttribute('data-listener-added', 'true');
     
     loginForm.addEventListener('submit', async function(e) {
         e.preventDefault();
@@ -93,7 +111,7 @@ function setupLoginForm() {
         if (!emailInput || !passwordInput) {
             console.error('E-Mail- oder Passwort-Feld nicht gefunden');
             if (errorMessage) {
-                errorMessage.textContent = 'Fehler: Formularfelder nicht gefunden';
+                errorMessage.textContent = 'Fehler: Formularfelder nicht gefunden. Bitte laden Sie die Seite neu.';
                 errorMessage.style.display = 'block';
             }
             return;
