@@ -841,6 +841,8 @@ td:first-child {
     .calendar {
         min-width: 100%;
         font-size: 0.8em;
+        table-layout: fixed;
+        border-collapse: collapse;
     }
 
     .calendar-cell {
@@ -854,6 +856,7 @@ td:first-child {
         user-select: none;
         -webkit-touch-callout: none; /* Deaktiviert das iOS-Kontextmenü */
         vertical-align: middle;
+        display: table-cell;
     }
     
     .cell-content {
@@ -861,10 +864,8 @@ td:first-child {
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        height: 100%;
-        width: 100%;
-        gap: 2px;
         min-height: 100%;
+        gap: 2px;
     }
     
     .cell-text {
