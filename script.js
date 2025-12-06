@@ -1079,6 +1079,31 @@ function restoreMergedCells() {
             firstCell.setAttribute('data-merged', 'true');
             firstCell.setAttribute('data-merged-cells', JSON.stringify(mergeData.mergedCells || []));
             
+            // WICHTIG: Für Wochenansicht - stelle sicher, dass der Text korrekt angezeigt wird
+            // Hole den Text aus der ersten Zelle oder aus assignments
+            const firstNoteKey = `${employee}-${firstDateKey}`;
+            const firstAssignment = assignments[employee]?.[firstDateKey];
+            const cellText = firstCell.querySelector('.cell-text');
+            
+            // Wenn es einen Text gibt, stelle sicher, dass er angezeigt wird
+            if (firstAssignment?.text || cellNotes[firstNoteKey]) {
+                const textToShow = firstAssignment?.text || cellNotes[firstNoteKey] || '';
+                if (cellText) {
+                    cellText.textContent = textToShow;
+                } else {
+                    // Erstelle cell-text falls nicht vorhanden
+                    const cellContent = firstCell.querySelector('.cell-content') || document.createElement('div');
+                    cellContent.className = 'cell-content';
+                    const newCellText = document.createElement('div');
+                    newCellText.className = 'cell-text';
+                    newCellText.textContent = textToShow;
+                    cellContent.appendChild(newCellText);
+                    if (!firstCell.querySelector('.cell-content')) {
+                        firstCell.appendChild(cellContent);
+                    }
+                }
+            }
+            
             // Aktualisiere die erste Zelle (aber behalte colspan)
             const savedColspan = firstCell.getAttribute('colspan') || spanCount;
             updateCell(firstCell, employee, firstDateKey);
@@ -1087,6 +1112,8 @@ function restoreMergedCells() {
             if (firstCell.hasAttribute('data-merged')) {
                 firstCell.setAttribute('colspan', savedColspan);
             }
+            
+            console.log('Zusammenführung wiederhergestellt - Text:', cellText?.textContent, 'spanCount:', spanCount, 'mergedCells:', mergeData.mergedCells);
         }, 100);
         
         console.log('Zusammenführung wiederhergestellt für:', mergeKey);
@@ -4174,8 +4201,12 @@ async function mergeSelectedCells() {
     const removedCells = [];
     const allRowCells = Array.from(row.children);
     
+    console.log('Zusammenführung - Entferne Zellen. mergedCellIds:', mergedCellIds, 'Anzahl:', mergedCellIds.length);
+    console.log('Zusammenführung - Alle Zellen in Zeile:', allRowCells.map(c => c.getAttribute('data-date')));
+    
     for (let i = 1; i < mergedCellIds.length; i++) {
         const dateKey = mergedCellIds[i];
+        console.log('Zusammenführung - Suche Zelle für dateKey:', dateKey, 'Index:', i);
         
         // Finde die Zelle im DOM - suche in allen Zellen der Zeile
         let cell = allRowCells.find(c => {
@@ -4193,6 +4224,7 @@ async function mergeSelectedCells() {
                     if (hiddenCells.includes(dateKey)) {
                         // Zelle wurde bereits entfernt, füge sie zu removedCells hinzu
                         removedCells.push({ dateKey, cell: null });
+                        console.log('Zelle bereits entfernt (hidden):', dateKey);
                         continue;
                     }
                 } catch (e) {
@@ -4202,6 +4234,7 @@ async function mergeSelectedCells() {
         }
         
         if (cell) {
+            console.log('Zelle gefunden und wird entfernt:', dateKey);
             // Entferne alle Daten aus den anderen Zellen
             const noteKey = `${employee}-${dateKey}`;
             const linkKey = `${employee}-${dateKey}-link`;
@@ -4220,13 +4253,14 @@ async function mergeSelectedCells() {
             // Zelle wurde bereits entfernt (z.B. bei vorheriger Zusammenführung)
             // Füge sie trotzdem zu removedCells hinzu
             removedCells.push({ dateKey, cell: null });
+            console.warn('Zelle nicht gefunden im DOM:', dateKey);
         }
     }
     
     // DEBUG: Logge alle mergedCellIds und removedCells
     console.log('Zusammenführung - mergedCellIds:', mergedCellIds);
     console.log('Zusammenführung - removedCells:', removedCells.map(c => c.dateKey));
-    console.log('Zusammenführung - spanCount:', spanCount, 'mergedCellIds.length:', mergedCellIds.length);
+    console.log('Zusammenführung - spanCount:', spanCount, 'mergedCellIds.length:', mergedCellIds.length, 'removedCells.length:', removedCells.length);
     
     // Speichere die entfernten Zellen
     firstCell.setAttribute('data-merged-hidden-cells', JSON.stringify(removedCells.map(c => c.dateKey)));
@@ -4627,11 +4661,20 @@ function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
         statusBtn.textContent = text;
         statusBtn.style.cssText = `display: block; width: 100%; padding: 10px; margin: 5px 0; background: ${color}; color: ${status === 'abgerechnet' ? 'black' : 'white'}; border: none; border-radius: 3px;`;
         statusBtn.addEventListener('click', async () => {
-            // Wenn keine Zellen markiert sind, markiere nur diese Zelle
+            // WICHTIG: Wenn keine Zellen markiert sind, markiere nur diese Zelle
             // Wenn bereits Zellen markiert sind, behalte die Auswahl und wende Status auf alle an
             if (selectedCells.size === 0) {
                 selectedCells.add(cell);
+                cell.classList.add('selected');
             }
+            
+            // DEBUG: Logge alle markierten Zellen vor dem Anwenden
+            console.log('Status-Button geklickt - Anzahl markierter Zellen:', selectedCells.size);
+            console.log('Markierte Zellen:', Array.from(selectedCells).map(c => {
+                const dateKey = getDateKeyFromCell(c);
+                return dateKey || c.getAttribute('data-date') || 'kein dateKey';
+            }));
+            
             // Wende Status auf alle markierten Zellen an
             await applyStatusToSelectedCells(status);
             menu.remove();
