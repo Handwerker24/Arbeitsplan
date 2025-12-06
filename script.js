@@ -1130,34 +1130,14 @@ function restoreMergedCells() {
                 }
             }
             
-            // WICHTIG: Rufe updateCell NICHT auf, wenn die Zelle zusammengeführt ist
-            // updateCell würde das colspan entfernen und den Text überschreiben
-            // Stattdessen setzen wir nur die Hintergrundfarbe und den Text manuell
-            if (!firstCell.hasAttribute('data-merged')) {
-                updateCell(firstCell, employee, firstDateKey);
-            } else {
-                // Für zusammengeführte Zellen: Setze nur die Hintergrundfarbe und den Text
-                const assignment = assignments[employee]?.[firstDateKey];
-                if (assignment) {
-                    const statusColors = {
-                        'urlaub': '#28a745',
-                        'krank': '#dc3545',
-                        'unbezahlt': '#ffc107',
-                        'schulung': '#6f42c1',
-                        'feiertag': '#17a2b8',
-                        'kurzarbeit': '#795548',
-                        'abgerechnet': '#d4edda',
-                        'ueberstunden': '#20c997'
-                    };
-                    
-                    if (assignment.status === 'abgerechnet') {
-                        firstCell.style.backgroundColor = '#d4edda';
-                        firstCell.style.color = 'black';
-                    } else if (assignment.status && statusColors[assignment.status]) {
-                        firstCell.style.backgroundColor = statusColors[assignment.status];
-                        firstCell.style.color = 'black';
-                    }
-                }
+            // WICHTIG: Rufe updateCell auf, um Farben, Text, etc. zu setzen
+            // updateCell entfernt colspan nicht, wenn data-merged bereits gesetzt ist
+            const savedColspan = firstCell.getAttribute('colspan');
+            updateCell(firstCell, employee, firstDateKey);
+            
+            // Stelle sicher, dass colspan erhalten bleibt (falls updateCell es entfernt hat)
+            if (firstCell.hasAttribute('data-merged') && savedColspan) {
+                firstCell.setAttribute('colspan', savedColspan);
                 
                 // Stelle sicher, dass der Text angezeigt wird
                 if (finalText) {
@@ -1177,11 +1157,6 @@ function restoreMergedCells() {
                         }
                     }
                 }
-            }
-            
-            // Stelle sicher, dass colspan erhalten bleibt
-            if (firstCell.hasAttribute('data-merged')) {
-                firstCell.setAttribute('colspan', spanCount);
             }
             
             console.log('Zusammenführung wiederhergestellt - Text:', finalText, 'spanCount:', spanCount, 'mergedCells:', mergeData.mergedCells);
@@ -1842,8 +1817,7 @@ function showCurrentWeek() {
             
             // Status und Farben anwenden
             // WICHTIG: updateCell wird aufgerufen, aber es entfernt colspan nicht, wenn data-merged gesetzt ist
-            // updateCell wird später in restoreMergedCells aufgerufen, wenn die Zelle zusammengeführt ist
-            // Für jetzt setzen wir nur die Grundstruktur, updateCell wird nach restoreMergedCells aufgerufen
+            updateCell(cell, employee, dateKey);
             
             // Event Listener für Zellenauswahl
             cell.addEventListener('mousedown', (e) => {
