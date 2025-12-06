@@ -3778,7 +3778,17 @@ async function mergeSelectedCells() {
     const selectedCellsArray = Array.from(selectedCells);
     console.log('Zusammenführung - Anzahl markierter Zellen:', selectedCellsArray.length);
     
-    selectedCellsArray.forEach(cell => {
+    // Sortiere Zellen nach Position (von links nach rechts), um sicherzustellen, dass alle erfasst werden
+    const sortedSelectedCells = selectedCellsArray.sort((a, b) => {
+        const rowA = a.parentElement;
+        const rowB = b.parentElement;
+        if (rowA !== rowB) return 0;
+        const indexA = Array.from(rowA.children).indexOf(a);
+        const indexB = Array.from(rowB.children).indexOf(b);
+        return indexA - indexB;
+    });
+    
+    sortedSelectedCells.forEach(cell => {
         if (!cell) return;
         
         const dateKey = getDateKeyFromCell(cell);
@@ -3791,7 +3801,7 @@ async function mergeSelectedCells() {
         }
     });
     
-    console.log('Zusammenführung - expandedDateKeys nach selectedCells:', Array.from(expandedDateKeys));
+    console.log('Zusammenführung - expandedDateKeys nach selectedCells:', Array.from(expandedDateKeys).sort());
     
     const allRows = document.querySelectorAll('tbody tr');
     allRows.forEach(row => {
