@@ -1840,42 +1840,10 @@ function showCurrentWeek() {
                 cell.appendChild(cellContent);
             }
             
-            // WICHTIG: Prüfe, ob diese Zelle Teil einer Zusammenführung ist
-            // Wenn ja, rufe updateCell NICHT auf, da restoreMergedCells das später macht
-            const cellMergeKey = `${employee}-${dateKey}`;
-            const isPartOfMerge = Object.keys(mergedCells).some(key => {
-                const mergeData = mergedCells[key];
-                return mergeData && mergeData.mergedCells && mergeData.mergedCells.includes(dateKey);
-            });
-            
-            // Status und Farben anwenden (nur wenn nicht Teil einer Zusammenführung)
-            if (!isPartOfMerge) {
-                updateCell(cell, employee, dateKey);
-            } else {
-                // Für zusammengeführte Zellen: Setze nur die Grundstruktur
-                // restoreMergedCells wird später den Text und colspan setzen
-                const assignment = assignments[employee]?.[dateKey];
-                if (assignment) {
-                    const statusColors = {
-                        'urlaub': '#28a745',
-                        'krank': '#dc3545',
-                        'unbezahlt': '#ffc107',
-                        'schulung': '#6f42c1',
-                        'feiertag': '#17a2b8',
-                        'kurzarbeit': '#795548',
-                        'abgerechnet': '#d4edda',
-                        'ueberstunden': '#20c997'
-                    };
-                    
-                    if (assignment.status === 'abgerechnet') {
-                        cell.style.backgroundColor = '#d4edda';
-                        cell.style.color = 'black';
-                    } else if (assignment.status && statusColors[assignment.status]) {
-                        cell.style.backgroundColor = statusColors[assignment.status];
-                        cell.style.color = 'black';
-                    }
-                }
-            }
+            // Status und Farben anwenden
+            // WICHTIG: updateCell wird aufgerufen, aber es entfernt colspan nicht, wenn data-merged gesetzt ist
+            // updateCell wird später in restoreMergedCells aufgerufen, wenn die Zelle zusammengeführt ist
+            // Für jetzt setzen wir nur die Grundstruktur, updateCell wird nach restoreMergedCells aufgerufen
             
             // Event Listener für Zellenauswahl
             cell.addEventListener('mousedown', (e) => {
@@ -2014,6 +1982,33 @@ function showCurrentWeek() {
     setTimeout(() => {
         console.log('showCurrentWeek: Rufe restoreMergedCells auf');
         restoreMergedCells();
+        
+        // WICHTIG: Nach restoreMergedCells: Rufe updateCell für ALLE Zellen auf
+        // Das stellt sicher, dass Farbmarkierungen, Status-Farben und Text korrekt angezeigt werden
+        // updateCell entfernt colspan nicht, wenn data-merged gesetzt ist
+        setTimeout(() => {
+            const allRows = document.querySelectorAll('tbody tr');
+            allRows.forEach(row => {
+                const employee = row.querySelector('td:first-child span')?.textContent;
+                if (!employee) return;
+                
+                const cells = row.querySelectorAll('td.calendar-cell');
+                cells.forEach(cell => {
+                    const dateKey = cell.getAttribute('data-date');
+                    if (dateKey) {
+                        updateCell(cell, employee, dateKey);
+                        
+                        // Stelle sicher, dass colspan erhalten bleibt, wenn die Zelle zusammengeführt ist
+                        if (cell.hasAttribute('data-merged')) {
+                            const savedColspan = cell.getAttribute('colspan');
+                            if (savedColspan) {
+                                cell.setAttribute('colspan', savedColspan);
+                            }
+                        }
+                    }
+                });
+            });
+        }, 100);
     }, 300);
 }
 
