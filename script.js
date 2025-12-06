@@ -1001,18 +1001,20 @@ function restoreMergedCells() {
         
         // Finde die erste Zelle über data-date Attribut
         const allCells = Array.from(targetRow.children);
+        console.log('restoreMergedCells: Suche Zelle für', firstDateKey, 'in Zeile mit', allCells.length, 'Zellen');
+        console.log('restoreMergedCells: Alle dateKeys in Zeile:', allCells.map(c => c.getAttribute('data-date')));
+        
         const firstCell = allCells.find(c => {
             const cellDateKey = c.getAttribute('data-date');
             return cellDateKey === firstDateKey;
         });
         
         if (!firstCell) {
-            // Reduziere Warnung - nur wenn das Datum eigentlich sichtbar sein sollte
-            // console.warn('Erste Zelle nicht gefunden für dateKey:', firstDateKey);
+            console.warn('Erste Zelle nicht gefunden für dateKey:', firstDateKey, 'in Zeile für', employee);
             return;
         }
         
-        console.log('Erste Zelle gefunden, stelle Zusammenführung wieder her');
+        console.log('Erste Zelle gefunden, stelle Zusammenführung wieder her:', firstDateKey, 'spanCount:', mergeData.mergedCells?.length);
         
         // Stelle die Zusammenführung wieder her mit CSS-Positionierung
         const spanCount = mergeData.mergedCells ? mergeData.mergedCells.length : 1;
@@ -1085,9 +1087,14 @@ function restoreMergedCells() {
             });
             
             // Setze colspan auf die erste Zelle
+            console.log('restoreMergedCells: Setze colspan auf', spanCount, 'für Zelle', firstDateKey);
             firstCell.setAttribute('colspan', spanCount);
             firstCell.setAttribute('data-merged', 'true');
             firstCell.setAttribute('data-merged-cells', JSON.stringify(mergeData.mergedCells || []));
+            
+            // DEBUG: Prüfe, ob colspan gesetzt wurde
+            const actualColspan = firstCell.getAttribute('colspan');
+            console.log('restoreMergedCells: colspan gesetzt:', actualColspan, 'erwartet:', spanCount);
             
             // WICHTIG: Für Wochenansicht - stelle sicher, dass der Text korrekt angezeigt wird
             // Hole den Text aus der ersten Zelle oder aus assignments
@@ -1833,8 +1840,42 @@ function showCurrentWeek() {
                 cell.appendChild(cellContent);
             }
             
-            // Status und Farben anwenden
-            updateCell(cell, employee, dateKey);
+            // WICHTIG: Prüfe, ob diese Zelle Teil einer Zusammenführung ist
+            // Wenn ja, rufe updateCell NICHT auf, da restoreMergedCells das später macht
+            const cellMergeKey = `${employee}-${dateKey}`;
+            const isPartOfMerge = Object.keys(mergedCells).some(key => {
+                const mergeData = mergedCells[key];
+                return mergeData && mergeData.mergedCells && mergeData.mergedCells.includes(dateKey);
+            });
+            
+            // Status und Farben anwenden (nur wenn nicht Teil einer Zusammenführung)
+            if (!isPartOfMerge) {
+                updateCell(cell, employee, dateKey);
+            } else {
+                // Für zusammengeführte Zellen: Setze nur die Grundstruktur
+                // restoreMergedCells wird später den Text und colspan setzen
+                const assignment = assignments[employee]?.[dateKey];
+                if (assignment) {
+                    const statusColors = {
+                        'urlaub': '#28a745',
+                        'krank': '#dc3545',
+                        'unbezahlt': '#ffc107',
+                        'schulung': '#6f42c1',
+                        'feiertag': '#17a2b8',
+                        'kurzarbeit': '#795548',
+                        'abgerechnet': '#d4edda',
+                        'ueberstunden': '#20c997'
+                    };
+                    
+                    if (assignment.status === 'abgerechnet') {
+                        cell.style.backgroundColor = '#d4edda';
+                        cell.style.color = 'black';
+                    } else if (assignment.status && statusColors[assignment.status]) {
+                        cell.style.backgroundColor = statusColors[assignment.status];
+                        cell.style.color = 'black';
+                    }
+                }
+            }
             
             // Event Listener für Zellenauswahl
             cell.addEventListener('mousedown', (e) => {
