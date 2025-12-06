@@ -1555,10 +1555,16 @@ function setupDesktopMonthView() {
                 let touchMoved = false;
                 
                 cell.addEventListener('touchstart', (e) => {
-                    // Wenn eine neue Auswahl beginnt und die Zelle nicht bereits markiert ist, lösche alte Auswahl
+                    // WICHTIG: Wenn eine neue Auswahl beginnt und die Zelle nicht bereits markiert ist, lösche alte Auswahl
+                    // ABER: Wenn die Zelle bereits markiert ist, behalte die Markierung
                     if (!cell.classList.contains('selected') && selectedCells.size > 0) {
                         clearSelection();
                         isSelecting = false;
+                    }
+                    
+                    // WICHTIG: Stelle sicher, dass die Zelle in der Markierung bleibt, wenn sie bereits markiert ist
+                    if (cell.classList.contains('selected') && !selectedCells.has(cell)) {
+                        selectedCells.add(cell);
                     }
                     
                     touchStartCell = cell;
@@ -1566,6 +1572,10 @@ function setupDesktopMonthView() {
                     longPressTimer = setTimeout(() => {
                         if (!touchMoved) {
                             e.preventDefault();
+                            // WICHTIG: Stelle sicher, dass die Zelle in der Markierung bleibt, bevor das Menü geöffnet wird
+                            if (cell.classList.contains('selected') && !selectedCells.has(cell)) {
+                                selectedCells.add(cell);
+                            }
                             showMobileContextMenu(cell, employee, dateKey, e.touches[0]);
                         }
                     }, 500); // 500ms für Long-Press
@@ -1814,10 +1824,16 @@ function showCurrentWeek() {
             let touchMoved = false;
             
             cell.addEventListener('touchstart', (e) => {
-                // Wenn eine neue Auswahl beginnt und die Zelle nicht bereits markiert ist, lösche alte Auswahl
+                // WICHTIG: Wenn eine neue Auswahl beginnt und die Zelle nicht bereits markiert ist, lösche alte Auswahl
+                // ABER: Wenn die Zelle bereits markiert ist, behalte die Markierung
                 if (!cell.classList.contains('selected') && selectedCells.size > 0) {
                     clearSelection();
                     isSelecting = false;
+                }
+                
+                // WICHTIG: Stelle sicher, dass die Zelle in der Markierung bleibt, wenn sie bereits markiert ist
+                if (cell.classList.contains('selected') && !selectedCells.has(cell)) {
+                    selectedCells.add(cell);
                 }
                 
                 touchStartCell = cell;
@@ -1825,6 +1841,10 @@ function showCurrentWeek() {
                 longPressTimer = setTimeout(() => {
                     if (!touchMoved) {
                         e.preventDefault();
+                        // WICHTIG: Stelle sicher, dass die Zelle in der Markierung bleibt, bevor das Menü geöffnet wird
+                        if (cell.classList.contains('selected') && !selectedCells.has(cell)) {
+                            selectedCells.add(cell);
+                        }
                         showMobileContextMenu(cell, employee, dateKey, e.touches[0]);
                     }
                 }, 500); // 500ms für Long-Press
@@ -4646,6 +4666,13 @@ if (clearSelectionBtn) {
 
 // Mobile Kontextmenü für Long-Press
 function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
+    // WICHTIG: Stelle sicher, dass die Zelle, auf die lange gedrückt wurde, in der Markierung bleibt
+    // Dies verhindert, dass die Zelle beim Öffnen des Menüs aus der Markierung entfernt wird
+    if (!selectedCells.has(cell)) {
+        selectedCells.add(cell);
+        cell.classList.add('selected');
+    }
+    
     // Entferne vorhandenes Kontextmenü
     const existingMenu = document.getElementById('mobileContextMenu');
     if (existingMenu) {
@@ -4765,6 +4792,13 @@ function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
         statusBtn.textContent = text;
         statusBtn.style.cssText = `display: block; width: 100%; padding: 10px; margin: 5px 0; background: ${color}; color: ${status === 'abgerechnet' ? 'black' : 'white'}; border: none; border-radius: 3px;`;
         statusBtn.addEventListener('click', async () => {
+            // WICHTIG: Stelle sicher, dass die Zelle, auf die lange gedrückt wurde, in der Markierung ist
+            // Dies ist wichtig, da die Zelle möglicherweise beim Öffnen des Menüs aus der Markierung entfernt wurde
+            if (!selectedCells.has(cell)) {
+                selectedCells.add(cell);
+                cell.classList.add('selected');
+            }
+            
             // WICHTIG: Wenn keine Zellen markiert sind, markiere nur diese Zelle
             // Wenn bereits Zellen markiert sind, behalte die Auswahl und wende Status auf alle an
             if (selectedCells.size === 0) {
@@ -4804,6 +4838,18 @@ function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
         mergeBtn.textContent = 'Zusammenführen';
         mergeBtn.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 5px 0; background: #28a745; color: white; border: none; border-radius: 3px;';
         mergeBtn.addEventListener('click', async () => {
+            // WICHTIG: Stelle sicher, dass die Zelle, auf die lange gedrückt wurde, in der Markierung ist
+            if (!selectedCells.has(cell)) {
+                selectedCells.add(cell);
+                cell.classList.add('selected');
+            }
+            
+            console.log('Zusammenführen-Button geklickt - Anzahl markierter Zellen:', selectedCells.size);
+            console.log('Markierte Zellen vor Zusammenführung:', Array.from(selectedCells).map(c => {
+                const dateKey = getDateKeyFromCell(c);
+                return dateKey || c.getAttribute('data-date') || 'kein dateKey';
+            }));
+            
             await mergeSelectedCells();
             menu.remove();
         });
