@@ -1114,9 +1114,6 @@ function restoreMergedCells() {
                 }
             }
             
-            // Aktualisiere die erste Zelle (aber behalte colspan)
-            const savedColspan = firstCell.getAttribute('colspan') || spanCount;
-            
             // WICHTIG: Entferne alle doppelten .cell-text Elemente, bevor wir updateCell aufrufen
             const cellTextElements = firstCell.querySelectorAll('.cell-text');
             if (cellTextElements.length > 1) {
@@ -1126,32 +1123,58 @@ function restoreMergedCells() {
                 }
             }
             
-            updateCell(firstCell, employee, firstDateKey);
+            // WICHTIG: Rufe updateCell NICHT auf, wenn die Zelle zusammengeführt ist
+            // updateCell würde das colspan entfernen und den Text überschreiben
+            // Stattdessen setzen wir nur die Hintergrundfarbe und den Text manuell
+            if (!firstCell.hasAttribute('data-merged')) {
+                updateCell(firstCell, employee, firstDateKey);
+            } else {
+                // Für zusammengeführte Zellen: Setze nur die Hintergrundfarbe und den Text
+                const assignment = assignments[employee]?.[firstDateKey];
+                if (assignment) {
+                    const statusColors = {
+                        'urlaub': '#28a745',
+                        'krank': '#dc3545',
+                        'unbezahlt': '#ffc107',
+                        'schulung': '#6f42c1',
+                        'feiertag': '#17a2b8',
+                        'kurzarbeit': '#795548',
+                        'abgerechnet': '#d4edda',
+                        'ueberstunden': '#20c997'
+                    };
+                    
+                    if (assignment.status === 'abgerechnet') {
+                        firstCell.style.backgroundColor = '#d4edda';
+                        firstCell.style.color = 'black';
+                    } else if (assignment.status && statusColors[assignment.status]) {
+                        firstCell.style.backgroundColor = statusColors[assignment.status];
+                        firstCell.style.color = 'black';
+                    }
+                }
+                
+                // Stelle sicher, dass der Text angezeigt wird
+                if (finalText) {
+                    const updatedCellText = firstCell.querySelector('.cell-text');
+                    if (updatedCellText) {
+                        updatedCellText.textContent = finalText;
+                    } else {
+                        // Erstelle cell-text falls nicht vorhanden
+                        const cellContent = firstCell.querySelector('.cell-content') || document.createElement('div');
+                        cellContent.className = 'cell-content';
+                        const newCellText = document.createElement('div');
+                        newCellText.className = 'cell-text';
+                        newCellText.textContent = finalText;
+                        cellContent.appendChild(newCellText);
+                        if (!firstCell.querySelector('.cell-content')) {
+                            firstCell.appendChild(cellContent);
+                        }
+                    }
+                }
+            }
             
             // Stelle sicher, dass colspan erhalten bleibt
             if (firstCell.hasAttribute('data-merged')) {
-                firstCell.setAttribute('colspan', savedColspan);
-            }
-            
-            // WICHTIG: Für Wochenansicht - stelle sicher, dass der Text korrekt angezeigt wird
-            // Hole den Text erneut nach updateCell, da updateCell den Text möglicherweise überschreibt
-            // ABER: Nur wenn die Zelle zusammengeführt ist
-            if (firstCell.hasAttribute('data-merged') && finalText) {
-                const updatedCellText = firstCell.querySelector('.cell-text');
-                if (updatedCellText) {
-                    updatedCellText.textContent = finalText;
-                } else {
-                    // Erstelle cell-text falls nicht vorhanden
-                    const cellContent = firstCell.querySelector('.cell-content') || document.createElement('div');
-                    cellContent.className = 'cell-content';
-                    const newCellText = document.createElement('div');
-                    newCellText.className = 'cell-text';
-                    newCellText.textContent = finalText;
-                    cellContent.appendChild(newCellText);
-                    if (!firstCell.querySelector('.cell-content')) {
-                        firstCell.appendChild(cellContent);
-                    }
-                }
+                firstCell.setAttribute('colspan', spanCount);
             }
             
             console.log('Zusammenführung wiederhergestellt - Text:', finalText, 'spanCount:', spanCount, 'mergedCells:', mergeData.mergedCells);
