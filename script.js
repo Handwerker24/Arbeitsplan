@@ -1537,12 +1537,20 @@ function setupDesktopMonthView() {
                         longPressTimer = null;
                     }
                     
-                    // Touch-Drag für Mehrfachauswahl
-                    if (touchStartCell && isSelecting) {
+                    // Touch-Drag für Mehrfachauswahl - aktiviere automatisch den Auswahlmodus
+                    if (touchStartCell) {
                         const touch = e.touches[0];
                         const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
                         const targetCell = elementBelow?.closest('.calendar-cell');
                         if (targetCell && targetCell !== touchStartCell) {
+                            // Aktiviere Auswahlmodus, wenn noch nicht aktiv
+                            if (!isSelecting) {
+                                isSelecting = true;
+                                // Markiere die Startzelle, wenn sie noch nicht markiert ist
+                                if (!touchStartCell.classList.contains('selected')) {
+                                    toggleCellSelection(touchStartCell);
+                                }
+                            }
                             selectCellsBetween(touchStartCell, targetCell);
                         }
                     }
@@ -1765,12 +1773,20 @@ function showCurrentWeek() {
                     longPressTimer = null;
                 }
                 
-                // Touch-Drag für Mehrfachauswahl
-                if (touchStartCell && isSelecting) {
+                // Touch-Drag für Mehrfachauswahl - aktiviere automatisch den Auswahlmodus
+                if (touchStartCell) {
                     const touch = e.touches[0];
                     const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
                     const targetCell = elementBelow?.closest('.calendar-cell');
                     if (targetCell && targetCell !== touchStartCell) {
+                        // Aktiviere Auswahlmodus, wenn noch nicht aktiv
+                        if (!isSelecting) {
+                            isSelecting = true;
+                            // Markiere die Startzelle, wenn sie noch nicht markiert ist
+                            if (!touchStartCell.classList.contains('selected')) {
+                                toggleCellSelection(touchStartCell);
+                            }
+                        }
                         selectCellsBetween(touchStartCell, targetCell);
                     }
                 }
@@ -4324,16 +4340,37 @@ function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
     // Erstelle Kontextmenü
     const menu = document.createElement('div');
     menu.id = 'mobileContextMenu';
+    
+    // Berechne optimale Position, damit das Menü vollständig sichtbar ist
+    const menuWidth = 200; // Geschätzte Breite
+    const menuHeight = 500; // Geschätzte Höhe (wird nach dem Anhängen aktualisiert)
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
+    let left = touchEvent.clientX;
+    let top = touchEvent.clientY;
+    
+    // Prüfe horizontale Position
+    if (left + menuWidth > viewportWidth) {
+        left = viewportWidth - menuWidth - 10; // 10px Abstand zum Rand
+    }
+    if (left < 10) {
+        left = 10;
+    }
+    
+    // Prüfe vertikale Position (wird nach dem Anhängen korrigiert)
     menu.style.cssText = `
         position: fixed;
-        left: ${touchEvent.clientX}px;
-        top: ${touchEvent.clientY}px;
+        left: ${left}px;
+        top: ${top}px;
         background: white;
         border: 2px solid #333;
         border-radius: 5px;
         padding: 10px;
         z-index: 10000;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        max-height: ${viewportHeight - 20}px;
+        overflow-y: auto;
     `;
     
     // Kopieren-Button
@@ -4458,9 +4495,47 @@ function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
         menu.appendChild(unmergeBtn);
     }
     
+    // Auswahl löschen Button (nur wenn Zellen markiert sind)
+    if (selectedCells.size > 0) {
+        const separator3 = document.createElement('hr');
+        separator3.style.cssText = 'margin: 10px 0; border: none; border-top: 1px solid #ddd;';
+        menu.appendChild(separator3);
+        
+        const clearSelectionBtn = document.createElement('button');
+        clearSelectionBtn.textContent = 'Auswahl löschen';
+        clearSelectionBtn.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 5px 0; background: #dc3545; color: white; border: none; border-radius: 3px;';
+        clearSelectionBtn.addEventListener('click', () => {
+            clearSelection();
+            menu.remove();
+        });
+        menu.appendChild(clearSelectionBtn);
+    }
+    
     menu.appendChild(closeBtn);
     
     document.body.appendChild(menu);
+    
+    // Korrigiere vertikale Position nach dem Anhängen (wenn nötig)
+    setTimeout(() => {
+        const menuRect = menu.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        
+        if (menuRect.bottom > viewportHeight - 10) {
+            // Menü geht unten raus, verschiebe nach oben
+            const newTop = viewportHeight - menuRect.height - 10;
+            if (newTop >= 10) {
+                menu.style.top = `${newTop}px`;
+            } else {
+                // Wenn es immer noch nicht passt, setze es oben an
+                menu.style.top = '10px';
+                menu.style.maxHeight = `${viewportHeight - 20}px`;
+            }
+        }
+        
+        if (menuRect.top < 10) {
+            menu.style.top = '10px';
+        }
+    }, 0);
     
     // Schließe beim Klick außerhalb
     setTimeout(() => {
