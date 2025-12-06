@@ -1113,7 +1113,15 @@ function restoreMergedCells() {
                 firstCell.setAttribute('colspan', savedColspan);
             }
             
-            console.log('Zusammenführung wiederhergestellt - Text:', cellText?.textContent, 'spanCount:', spanCount, 'mergedCells:', mergeData.mergedCells);
+            // WICHTIG: Für Wochenansicht - stelle sicher, dass der Text korrekt angezeigt wird
+            // Hole den Text erneut nach updateCell, da updateCell den Text möglicherweise überschreibt
+            const updatedCellText = firstCell.querySelector('.cell-text');
+            const finalText = firstAssignment?.text || cellNotes[firstNoteKey] || '';
+            if (updatedCellText && finalText) {
+                updatedCellText.textContent = finalText;
+            }
+            
+            console.log('Zusammenführung wiederhergestellt - Text:', finalText, 'spanCount:', spanCount, 'mergedCells:', mergeData.mergedCells);
         }, 100);
         
         console.log('Zusammenführung wiederhergestellt für:', mergeKey);
@@ -2097,43 +2105,52 @@ async function applyStatusToSelectedCells(status) {
         await saveData('cellHighlights', cellHighlights);
     }
     
-    // Verarbeite alle Zellen - konvertiere zu Array, um sicherzustellen, dass alle erfasst werden
-    // WICHTIG: Erstelle eine Kopie der selectedCells, damit wir alle Zellen verarbeiten, auch wenn sich selectedCells während der Verarbeitung ändert
-    const cellsToProcess = Array.from(selectedCells);
-    console.log('Verarbeite Status für', cellsToProcess.length, 'Zellen');
-    console.log('Markierte Zellen:', cellsToProcess.map(c => getDateKeyFromCell(c)));
+    // WICHTIG: Sammle zuerst alle dateKeys und employee-Informationen, BEVOR wir die Zellen verarbeiten
+    // Das verhindert, dass Zellen während der Verarbeitung verloren gehen
+    const cellsToProcess = [];
+    const cellData = [];
     
-    // Sortiere Zellen nach Position, um konsistente Verarbeitung zu gewährleisten
-    const sortedCells = cellsToProcess.sort((a, b) => {
-        const rowA = a.parentElement;
-        const rowB = b.parentElement;
-        if (rowA !== rowB) {
-            const rows = Array.from(document.querySelector('.calendar tbody')?.children || []);
-            return rows.indexOf(rowA) - rows.indexOf(rowB);
-        }
-        const indexA = Array.from(rowA.children).indexOf(a);
-        const indexB = Array.from(rowB.children).indexOf(b);
-        return indexA - indexB;
-    });
-    
-    for (const cell of sortedCells) {
-        if (!cell || !cell.parentElement) {
-            console.warn('Zelle oder parentElement fehlt:', cell);
-            continue;
-        }
+    // Sammle alle Zellen und ihre Daten
+    for (const cell of selectedCells) {
+        if (!cell || !cell.parentElement) continue;
         
         const row = cell.parentElement;
         const employeeElement = row.querySelector('td:first-child span');
-        if (!employeeElement) {
-            console.warn('Kein employeeElement gefunden für Zelle:', cell);
-            continue;
-        }
+        if (!employeeElement) continue;
         
         const employee = employeeElement.textContent;
         const dateKey = getDateKeyFromCell(cell);
         
         if (!dateKey) {
-            console.warn('Kein dateKey für Zelle gefunden:', cell, 'data-date:', cell.getAttribute('data-date'));
+            console.warn('Kein dateKey für Zelle gefunden:', cell);
+            continue;
+        }
+        
+        cellsToProcess.push(cell);
+        cellData.push({ cell, employee, dateKey });
+    }
+    
+    console.log('Verarbeite Status für', cellsToProcess.length, 'Zellen');
+    console.log('Markierte Zellen:', cellData.map(d => `${d.employee}-${d.dateKey}`));
+    
+    // Sortiere Zellen nach Position, um konsistente Verarbeitung zu gewährleisten
+    const sortedCellData = cellData.sort((a, b) => {
+        const rowA = a.cell.parentElement;
+        const rowB = b.cell.parentElement;
+        if (rowA !== rowB) {
+            const rows = Array.from(document.querySelector('.calendar tbody')?.children || []);
+            return rows.indexOf(rowA) - rows.indexOf(rowB);
+        }
+        const indexA = Array.from(rowA.children).indexOf(a.cell);
+        const indexB = Array.from(rowB.children).indexOf(b.cell);
+        return indexA - indexB;
+    });
+    
+    // Verarbeite alle Zellen
+    for (const { cell, employee, dateKey } of sortedCellData) {
+        // Prüfe, ob die Zelle noch im DOM ist
+        if (!cell || !cell.parentElement || !document.body.contains(cell)) {
+            console.warn('Zelle nicht mehr im DOM:', dateKey);
             continue;
         }
         
@@ -3647,38 +3664,137 @@ async function unmergeSelectedCells() {
                     
                     newCell.appendChild(cellContent);
                     
-                    // Füge Event-Listener hinzu (wie in setupDesktopMonthView)
-                    newCell.addEventListener('mousedown', (e) => {
-                        e.preventDefault();
-                        if (!isSelecting) {
-                            clearSelection();
-                        }
-                        isSelecting = true;
-                        lastSelectedCell = newCell;
-                        toggleCellSelection(newCell);
-                    });
-                    
-                    newCell.addEventListener('mouseover', (e) => {
-                        if (isSelecting && lastSelectedCell) {
-                            selectCellsBetween(lastSelectedCell, newCell);
-                        }
-                    });
-                    
-                    let clickTimeout;
-                    newCell.addEventListener('click', (e) => {
-                        clearTimeout(clickTimeout);
-                        clickTimeout = setTimeout(() => {
-                            if (currentEditingCell && currentEditingCell !== newCell) {
-                                closeInfoField();
+                    // WICHTIG: Füge Event-Listener hinzu - für Wochenansicht müssen wir die gleichen Listener wie in showCurrentWeek verwenden
+                    if (isWeekView) {
+                        // Event Listener für Zellenauswahl (Wochenansicht)
+                        newCell.addEventListener('mousedown', (e) => {
+                            e.preventDefault();
+                            if (!isSelecting) {
+                                clearSelection();
                             }
-                        }, 200);
-                    });
-                    
-                    newCell.addEventListener('dblclick', (e) => {
-                        clearTimeout(clickTimeout);
-                        e.preventDefault();
-                        showInfoField(newCell, employee, dateKey, true);
-                    });
+                            isSelecting = true;
+                            lastSelectedCell = newCell;
+                            toggleCellSelection(newCell);
+                        });
+                        
+                        newCell.addEventListener('mouseover', (e) => {
+                            if (isSelecting && lastSelectedCell) {
+                                selectCellsBetween(lastSelectedCell, newCell);
+                            }
+                        });
+                        
+                        let clickTimeout;
+                        newCell.addEventListener('click', (e) => {
+                            clearTimeout(clickTimeout);
+                            clickTimeout = setTimeout(() => {
+                                if (currentEditingCell && currentEditingCell !== newCell) {
+                                    closeInfoField();
+                                }
+                            }, 200);
+                        });
+                        
+                        newCell.addEventListener('dblclick', (e) => {
+                            clearTimeout(clickTimeout);
+                            e.preventDefault();
+                            showInfoField(newCell, employee, dateKey, true);
+                        });
+                        
+                        // Mobile Touch-Events
+                        let longPressTimer = null;
+                        let touchStartCell = null;
+                        let touchMoved = false;
+                        
+                        newCell.addEventListener('touchstart', (e) => {
+                            if (!newCell.classList.contains('selected') && selectedCells.size > 0) {
+                                clearSelection();
+                                isSelecting = false;
+                            }
+                            touchStartCell = newCell;
+                            touchMoved = false;
+                            longPressTimer = setTimeout(() => {
+                                if (!touchMoved) {
+                                    e.preventDefault();
+                                    showMobileContextMenu(newCell, employee, dateKey, e.touches[0]);
+                                }
+                            }, 500);
+                        });
+                        
+                        newCell.addEventListener('touchmove', (e) => {
+                            touchMoved = true;
+                            if (longPressTimer) {
+                                clearTimeout(longPressTimer);
+                                longPressTimer = null;
+                            }
+                            if (touchStartCell) {
+                                const touch = e.touches[0];
+                                const startX = touchStartCell.getBoundingClientRect().left + touchStartCell.getBoundingClientRect().width / 2;
+                                const startY = touchStartCell.getBoundingClientRect().top + touchStartCell.getBoundingClientRect().height / 2;
+                                const deltaX = Math.abs(touch.clientX - startX);
+                                const deltaY = Math.abs(touch.clientY - startY);
+                                if (deltaX > 30 && deltaX > deltaY) {
+                                    e.preventDefault();
+                                    const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+                                    const targetCell = elementBelow?.closest('.calendar-cell');
+                                    if (targetCell && targetCell !== touchStartCell) {
+                                        if (!isSelecting) {
+                                            isSelecting = true;
+                                            if (!touchStartCell.classList.contains('selected')) {
+                                                toggleCellSelection(touchStartCell);
+                                            }
+                                        }
+                                        selectCellsBetween(touchStartCell, targetCell);
+                                    }
+                                } else if (deltaY > 50 && deltaY > deltaX) {
+                                    isSelecting = false;
+                                }
+                            }
+                        }, { passive: false });
+                        
+                        newCell.addEventListener('touchend', (e) => {
+                            if (longPressTimer) {
+                                clearTimeout(longPressTimer);
+                                longPressTimer = null;
+                            }
+                            if (!touchMoved && touchStartCell) {
+                                toggleCellSelection(newCell);
+                            }
+                            touchStartCell = null;
+                            touchMoved = false;
+                        });
+                    } else {
+                        // Event Listener für Monatsansicht
+                        newCell.addEventListener('mousedown', (e) => {
+                            e.preventDefault();
+                            if (!isSelecting) {
+                                clearSelection();
+                            }
+                            isSelecting = true;
+                            lastSelectedCell = newCell;
+                            toggleCellSelection(newCell);
+                        });
+                        
+                        newCell.addEventListener('mouseover', (e) => {
+                            if (isSelecting && lastSelectedCell) {
+                                selectCellsBetween(lastSelectedCell, newCell);
+                            }
+                        });
+                        
+                        let clickTimeout;
+                        newCell.addEventListener('click', (e) => {
+                            clearTimeout(clickTimeout);
+                            clickTimeout = setTimeout(() => {
+                                if (currentEditingCell && currentEditingCell !== newCell) {
+                                    closeInfoField();
+                                }
+                            }, 200);
+                        });
+                        
+                        newCell.addEventListener('dblclick', (e) => {
+                            clearTimeout(clickTimeout);
+                            e.preventDefault();
+                            showInfoField(newCell, employee, dateKey, true);
+                        });
+                    }
                     
                     // Füge die Zelle ein
                     if (row.children[firstCellIndex + i]) {
@@ -4197,64 +4313,52 @@ async function mergeSelectedCells() {
     
     // Entferne die anderen Zellen aus dem DOM
     // WICHTIG: Entferne alle Zellen, die in mergedCellIds sind, außer der ersten
-    // WICHTIG: Durchlaufe alle Zellen in der Zeile, um sicherzustellen, dass auch das letzte Feld erfasst wird
+    // WICHTIG: Sammle zuerst ALLE Zellen, die entfernt werden sollen, BEVOR wir sie entfernen
     const removedCells = [];
-    const allRowCells = Array.from(row.children);
+    const cellsToRemove = [];
     
     console.log('Zusammenführung - Entferne Zellen. mergedCellIds:', mergedCellIds, 'Anzahl:', mergedCellIds.length);
-    console.log('Zusammenführung - Alle Zellen in Zeile:', allRowCells.map(c => c.getAttribute('data-date')));
     
+    // Sammle zuerst alle Zellen, die entfernt werden sollen
     for (let i = 1; i < mergedCellIds.length; i++) {
         const dateKey = mergedCellIds[i];
         console.log('Zusammenführung - Suche Zelle für dateKey:', dateKey, 'Index:', i);
         
         // Finde die Zelle im DOM - suche in allen Zellen der Zeile
+        // WICHTIG: Hole allRowCells jedes Mal neu, da sich die Liste ändern könnte
+        const allRowCells = Array.from(row.children);
         let cell = allRowCells.find(c => {
             const cellDateKey = c.getAttribute('data-date');
-            return cellDateKey === dateKey && !c.hasAttribute('data-merged');
+            return cellDateKey === dateKey && !c.hasAttribute('data-merged') && c !== firstCell;
         });
         
-        // Falls nicht gefunden, könnte es eine zusammengeführte Zelle sein - suche auch in merged-hidden-cells
-        if (!cell) {
-            // Prüfe, ob es eine zusammengeführte Zelle ist, die bereits entfernt wurde
-            const mergedHiddenCells = firstCell.getAttribute('data-merged-hidden-cells');
-            if (mergedHiddenCells) {
-                try {
-                    const hiddenCells = JSON.parse(mergedHiddenCells);
-                    if (hiddenCells.includes(dateKey)) {
-                        // Zelle wurde bereits entfernt, füge sie zu removedCells hinzu
-                        removedCells.push({ dateKey, cell: null });
-                        console.log('Zelle bereits entfernt (hidden):', dateKey);
-                        continue;
-                    }
-                } catch (e) {
-                    console.error('Fehler beim Parsen von merged-hidden-cells:', e);
-                }
-            }
-        }
-        
         if (cell) {
-            console.log('Zelle gefunden und wird entfernt:', dateKey);
-            // Entferne alle Daten aus den anderen Zellen
-            const noteKey = `${employee}-${dateKey}`;
-            const linkKey = `${employee}-${dateKey}-link`;
-            const addressKey = `${employee}-${dateKey}-address`;
-            
-            delete cellNotes[noteKey];
-            delete cellLinks[linkKey];
-            delete cellAddresses[addressKey];
-            if (assignments[employee]) {
-                delete assignments[employee][dateKey];
-            }
-            
-            removedCells.push({ dateKey, cell });
-            cell.remove();
+            console.log('Zelle gefunden und wird zum Entfernen markiert:', dateKey);
+            cellsToRemove.push({ dateKey, cell });
         } else {
             // Zelle wurde bereits entfernt (z.B. bei vorheriger Zusammenführung)
-            // Füge sie trotzdem zu removedCells hinzu
             removedCells.push({ dateKey, cell: null });
             console.warn('Zelle nicht gefunden im DOM:', dateKey);
         }
+    }
+    
+    // Entferne jetzt alle gesammelten Zellen
+    for (const { dateKey, cell } of cellsToRemove) {
+        // Entferne alle Daten aus den anderen Zellen
+        const noteKey = `${employee}-${dateKey}`;
+        const linkKey = `${employee}-${dateKey}-link`;
+        const addressKey = `${employee}-${dateKey}-address`;
+        
+        delete cellNotes[noteKey];
+        delete cellLinks[linkKey];
+        delete cellAddresses[addressKey];
+        if (assignments[employee]) {
+            delete assignments[employee][dateKey];
+        }
+        
+        removedCells.push({ dateKey, cell });
+        cell.remove();
+        console.log('Zelle entfernt:', dateKey);
     }
     
     // DEBUG: Logge alle mergedCellIds und removedCells
