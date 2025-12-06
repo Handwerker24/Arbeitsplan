@@ -1178,11 +1178,13 @@ function restoreMergedCells() {
                 }
                 
                 // Stelle sicher, dass der Text angezeigt wird (aber nicht doppelt)
+                // WICHTIG: Entferne zuerst alle .cell-text Elemente und setze cell.textContent auf leer,
+                // um sicherzustellen, dass kein Text doppelt gesetzt wird
+                const allCellTexts = firstCell.querySelectorAll('.cell-text');
+                allCellTexts.forEach(textEl => textEl.remove());
+                firstCell.textContent = ''; // Leere den gesamten Text-Inhalt
+                
                 if (finalText) {
-                    // Entferne alle .cell-text Elemente zuerst, um doppelte zu vermeiden
-                    const allCellTexts = firstCell.querySelectorAll('.cell-text');
-                    allCellTexts.forEach(textEl => textEl.remove());
-                    
                     // Erstelle ein neues .cell-text Element
                     let cellContent = firstCell.querySelector('.cell-content');
                     if (!cellContent) {
@@ -2018,8 +2020,12 @@ function showCurrentWeek() {
     // Stelle zusammengeführte Zellen wieder her (nachdem alle Zellen erstellt wurden)
     // WICHTIG: Warte länger, damit alle Zellen vollständig gerendert sind
     setTimeout(() => {
-        console.log('showCurrentWeek: Rufe restoreMergedCells auf');
+        console.log('showCurrentWeek: Rufe restoreMergedCells auf, isWeekView:', isWeekView);
+        // WICHTIG: Stelle sicher, dass isWeekView korrekt gesetzt ist
+        const wasWeekView = isWeekView;
+        isWeekView = true; // Explizit auf true setzen für restoreMergedCells
         restoreMergedCells();
+        isWeekView = wasWeekView; // Wiederherstellen des ursprünglichen Werts
         
         // WICHTIG: Nach restoreMergedCells: Rufe updateCell für Zellen auf, die NICHT zusammengeführt sind
         // Für zusammengeführte Zellen wurde updateCell bereits in restoreMergedCells aufgerufen
