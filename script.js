@@ -937,9 +937,9 @@ function restoreMergedCells() {
     let visibleStartDate, visibleEndDate;
     if (isWeekView) {
         const monday = getCurrentWeek();
-        visibleStartDate = new Date(monday);
-        visibleEndDate = new Date(monday);
-        visibleEndDate.setDate(monday.getDate() + 6);
+        visibleStartDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate());
+        visibleEndDate = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+        console.log('restoreMergedCells: Wochenansicht - Montag:', visibleStartDate.toISOString().split('T')[0], 'Sonntag:', visibleEndDate.toISOString().split('T')[0]);
     } else {
         const year = currentDate.getFullYear();
         const month = currentDate.getMonth();
@@ -961,7 +961,11 @@ function restoreMergedCells() {
     function isDateVisible(dateKey) {
         const date = parseDateKey(dateKey);
         if (!date) return false;
-        return date >= visibleStartDate && date <= visibleEndDate;
+        // Normalisiere die Zeitkomponente auf Mitternacht für korrekten Vergleich
+        const normalizedDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+        const normalizedStart = new Date(visibleStartDate.getFullYear(), visibleStartDate.getMonth(), visibleStartDate.getDate());
+        const normalizedEnd = new Date(visibleEndDate.getFullYear(), visibleEndDate.getMonth(), visibleEndDate.getDate());
+        return normalizedDate >= normalizedStart && normalizedDate <= normalizedEnd;
     }
     
     Object.keys(mergedCells).forEach(mergeKey => {
@@ -974,6 +978,11 @@ function restoreMergedCells() {
         // mergeKey Format: "employee-year-month-day"
         const employee = parts[0];
         const firstDateKey = parts.slice(1).join('-'); // Rest ist das Datum
+        
+        // DEBUG: Prüfe speziell für "Heine" oder andere wichtige Merges
+        if (mergeKey.includes('Heine') || mergeKey.includes('Bruno') || mergeKey.includes('Levent') || mergeKey.includes('Norbert')) {
+            console.log('restoreMergedCells: WICHTIGER Merge gefunden:', mergeKey, 'employee:', employee, 'firstDateKey:', firstDateKey);
+        }
         
         console.log('restoreMergedCells: Prüfe mergeKey:', mergeKey, 'firstDateKey:', firstDateKey, 'isWeekView:', isWeekView);
         
