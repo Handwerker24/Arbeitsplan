@@ -1520,6 +1520,12 @@ function setupDesktopMonthView() {
                 let touchMoved = false;
                 
                 cell.addEventListener('touchstart', (e) => {
+                    // Wenn eine neue Auswahl beginnt und die Zelle nicht bereits markiert ist, lösche alte Auswahl
+                    if (!cell.classList.contains('selected') && selectedCells.size > 0) {
+                        clearSelection();
+                        isSelecting = false;
+                    }
+                    
                     touchStartCell = cell;
                     touchMoved = false;
                     longPressTimer = setTimeout(() => {
@@ -1756,6 +1762,12 @@ function showCurrentWeek() {
             let touchMoved = false;
             
             cell.addEventListener('touchstart', (e) => {
+                // Wenn eine neue Auswahl beginnt und die Zelle nicht bereits markiert ist, lösche alte Auswahl
+                if (!cell.classList.contains('selected') && selectedCells.size > 0) {
+                    clearSelection();
+                    isSelecting = false;
+                }
+                
                 touchStartCell = cell;
                 touchMoved = false;
                 longPressTimer = setTimeout(() => {
@@ -1903,23 +1915,46 @@ function selectCellsBetween(startCell, endCell) {
     
     const startRow = startCell.parentElement;
     const endRow = endCell.parentElement;
-    const startIndex = Array.from(startRow.children).indexOf(startCell);
-    const endIndex = Array.from(endRow.children).indexOf(endCell);
     
-    const rows = Array.from(document.querySelector('.calendar tbody').children);
-    const startRowIndex = rows.indexOf(startRow);
-    const endRowIndex = rows.indexOf(endRow);
-    
-    const minRow = Math.min(startRowIndex, endRowIndex);
-    const maxRow = Math.max(startRowIndex, endRowIndex);
-    const minCol = Math.min(startIndex, endIndex);
-    const maxCol = Math.max(startIndex, endIndex);
-    
-    // Markiere dann die neuen Zellen
-    for (let row = minRow; row <= maxRow; row++) {
+    // Prüfe, ob die Zellen in derselben Zeile sind
+    if (startRow !== endRow) {
+        // Wenn nicht in derselben Zeile, markiere nur die Zellen in der Startzeile bis zur Endzeile
+        const rows = Array.from(document.querySelector('.calendar tbody').children);
+        const startRowIndex = rows.indexOf(startRow);
+        const endRowIndex = rows.indexOf(endRow);
+        const minRow = Math.min(startRowIndex, endRowIndex);
+        const maxRow = Math.max(startRowIndex, endRowIndex);
+        
+        // Finde die Spaltenindizes
+        const startIndex = Array.from(startRow.children).indexOf(startCell);
+        const endIndex = Array.from(endRow.children).indexOf(endCell);
+        const minCol = Math.min(startIndex, endIndex);
+        const maxCol = Math.max(startIndex, endIndex);
+        
+        // Markiere alle Zellen im Bereich
+        for (let row = minRow; row <= maxRow; row++) {
+            const currentRow = rows[row];
+            if (!currentRow) continue;
+            
+            for (let col = minCol; col <= maxCol; col++) {
+                const cell = currentRow.children[col];
+                if (cell && !cell.classList.contains('name-cell') && !cell.hasAttribute('data-merged-placeholder')) {
+                    cell.classList.add('selected');
+                    selectedCells.add(cell);
+                }
+            }
+        }
+    } else {
+        // Zellen sind in derselben Zeile
+        const startIndex = Array.from(startRow.children).indexOf(startCell);
+        const endIndex = Array.from(endRow.children).indexOf(endCell);
+        const minCol = Math.min(startIndex, endIndex);
+        const maxCol = Math.max(startIndex, endIndex);
+        
+        // Markiere alle Zellen zwischen startCell und endCell (inklusive)
         for (let col = minCol; col <= maxCol; col++) {
-            const cell = rows[row].children[col];
-            if (cell && !cell.classList.contains('name-cell')) {
+            const cell = startRow.children[col];
+            if (cell && !cell.classList.contains('name-cell') && !cell.hasAttribute('data-merged-placeholder')) {
                 cell.classList.add('selected');
                 selectedCells.add(cell);
             }
@@ -3690,6 +3725,15 @@ async function mergeSelectedCells() {
     
     // Finde alle Zellen im DOM, die zu den erweiterten dateKeys gehören
     // Dies ist wichtig, um auch Zellen zu finden, die noch nicht zusammengeführt wurden
+    // WICHTIG: Füge auch alle Zellen aus selectedCells hinzu, um sicherzustellen, dass alle markierten Zellen erfasst werden
+    selectedCells.forEach(cell => {
+        const dateKey = getDateKeyFromCell(cell);
+        if (dateKey) {
+            expandedDateKeys.add(dateKey);
+            expandedCells.add(cell);
+        }
+    });
+    
     const allRows = document.querySelectorAll('tbody tr');
     allRows.forEach(row => {
         const employee = row.querySelector('td:first-child span')?.textContent;
