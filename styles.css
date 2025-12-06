@@ -368,6 +368,23 @@ td:first-child {
     word-break: break-word;
 }
 
+/* Für zusammengelegte Felder: Text mittig ausrichten und doppelten Text vermeiden */
+.calendar-cell[data-merged] .cell-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    position: relative;
+}
+
+.calendar-cell[data-merged] .cell-text {
+    text-align: center;
+    margin: 0;
+    padding: 0;
+    line-height: 1.2;
+}
+
 .calendar-cell:hover {
     background-color: #e8e8e8;
 }

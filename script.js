@@ -1106,6 +1106,16 @@ function restoreMergedCells() {
             
             // Aktualisiere die erste Zelle (aber behalte colspan)
             const savedColspan = firstCell.getAttribute('colspan') || spanCount;
+            
+            // WICHTIG: Entferne alle doppelten .cell-text Elemente, bevor wir updateCell aufrufen
+            const cellTextElements = firstCell.querySelectorAll('.cell-text');
+            if (cellTextElements.length > 1) {
+                // Behalte nur das erste Element, entferne die anderen
+                for (let i = 1; i < cellTextElements.length; i++) {
+                    cellTextElements[i].remove();
+                }
+            }
+            
             updateCell(firstCell, employee, firstDateKey);
             
             // Stelle sicher, dass colspan erhalten bleibt
@@ -1115,10 +1125,24 @@ function restoreMergedCells() {
             
             // WICHTIG: Für Wochenansicht - stelle sicher, dass der Text korrekt angezeigt wird
             // Hole den Text erneut nach updateCell, da updateCell den Text möglicherweise überschreibt
-            const updatedCellText = firstCell.querySelector('.cell-text');
-            const finalText = firstAssignment?.text || cellNotes[firstNoteKey] || '';
-            if (updatedCellText && finalText) {
-                updatedCellText.textContent = finalText;
+            // ABER: Nur wenn die Zelle zusammengeführt ist
+            if (firstCell.hasAttribute('data-merged')) {
+                const updatedCellText = firstCell.querySelector('.cell-text');
+                const finalText = firstAssignment?.text || cellNotes[firstNoteKey] || '';
+                if (updatedCellText && finalText) {
+                    updatedCellText.textContent = finalText;
+                } else if (finalText) {
+                    // Erstelle cell-text falls nicht vorhanden
+                    const cellContent = firstCell.querySelector('.cell-content') || document.createElement('div');
+                    cellContent.className = 'cell-content';
+                    const newCellText = document.createElement('div');
+                    newCellText.className = 'cell-text';
+                    newCellText.textContent = finalText;
+                    cellContent.appendChild(newCellText);
+                    if (!firstCell.querySelector('.cell-content')) {
+                        firstCell.appendChild(cellContent);
+                    }
+                }
             }
             
             console.log('Zusammenführung wiederhergestellt - Text:', finalText, 'spanCount:', spanCount, 'mergedCells:', mergeData.mergedCells);
@@ -2021,32 +2045,84 @@ function selectCellsBetween(startCell, endCell) {
         const maxCol = Math.max(startIndex, endIndex);
         
         // Markiere alle Zellen im Bereich
+        // WICHTIG: Berücksichtige colspan bei zusammengeführten Zellen
         for (let row = minRow; row <= maxRow; row++) {
             const currentRow = rows[row];
             if (!currentRow) continue;
             
-            for (let col = minCol; col <= maxCol; col++) {
+            let actualCol = 0;
+            for (let col = 0; col < currentRow.children.length; col++) {
                 const cell = currentRow.children[col];
-                if (cell && !cell.classList.contains('name-cell') && !cell.hasAttribute('data-merged-placeholder')) {
+                if (!cell || cell.classList.contains('name-cell') || cell.hasAttribute('data-merged-placeholder')) {
+                    continue;
+                }
+                
+                // Prüfe, ob die Zelle zusammengeführt ist
+                const colspan = parseInt(cell.getAttribute('colspan') || '1', 10);
+                const cellStartCol = actualCol;
+                const cellEndCol = actualCol + colspan - 1;
+                
+                // Prüfe, ob diese Zelle im markierten Bereich liegt
+                if (cellStartCol <= maxCol && cellEndCol >= minCol) {
                     cell.classList.add('selected');
                     selectedCells.add(cell);
                 }
+                
+                actualCol += colspan;
             }
         }
     } else {
         // Zellen sind in derselben Zeile
+        // WICHTIG: Berücksichtige colspan bei zusammengeführten Zellen
         const startIndex = Array.from(startRow.children).indexOf(startCell);
         const endIndex = Array.from(endRow.children).indexOf(endCell);
-        const minCol = Math.min(startIndex, endIndex);
-        const maxCol = Math.max(startIndex, endIndex);
+        
+        // Berechne die tatsächlichen Spaltenindizes unter Berücksichtigung von colspan
+        let startActualCol = 0;
+        let endActualCol = 0;
+        
+        for (let i = 0; i < startRow.children.length; i++) {
+            const cell = startRow.children[i];
+            if (cell.classList.contains('name-cell') || cell.hasAttribute('data-merged-placeholder')) {
+                continue;
+            }
+            
+            const colspan = parseInt(cell.getAttribute('colspan') || '1', 10);
+            
+            if (i < startIndex) {
+                startActualCol += colspan;
+            }
+            if (i < endIndex) {
+                endActualCol += colspan;
+            }
+            
+            if (i >= Math.max(startIndex, endIndex)) {
+                break;
+            }
+        }
+        
+        const minCol = Math.min(startActualCol, endActualCol);
+        const maxCol = Math.max(startActualCol, endActualCol);
         
         // Markiere alle Zellen zwischen startCell und endCell (inklusive)
-        for (let col = minCol; col <= maxCol; col++) {
+        let actualCol = 0;
+        for (let col = 0; col < startRow.children.length; col++) {
             const cell = startRow.children[col];
-            if (cell && !cell.classList.contains('name-cell') && !cell.hasAttribute('data-merged-placeholder')) {
+            if (!cell || cell.classList.contains('name-cell') || cell.hasAttribute('data-merged-placeholder')) {
+                continue;
+            }
+            
+            const colspan = parseInt(cell.getAttribute('colspan') || '1', 10);
+            const cellStartCol = actualCol;
+            const cellEndCol = actualCol + colspan - 1;
+            
+            // Prüfe, ob diese Zelle im markierten Bereich liegt
+            if (cellStartCol <= maxCol && cellEndCol >= minCol) {
                 cell.classList.add('selected');
                 selectedCells.add(cell);
             }
+            
+            actualCol += colspan;
         }
     }
 }
@@ -3225,6 +3301,10 @@ function extendTextOverCells(cell, employee, dateKey) {
 }
 
 function updateCell(cell, employee, dateKey) {
+    // WICHTIG: Wenn die Zelle zusammengeführt ist, überschreibe den Text nicht
+    // Der Text wird bereits in restoreMergedCells gesetzt
+    const isMerged = cell.hasAttribute('data-merged');
+    
     const assignment = assignments[employee]?.[dateKey];
     const noteKey = `${employee}-${dateKey}`;
     const linkKey = `${employee}-${dateKey}-link`;
@@ -3294,8 +3374,9 @@ function updateCell(cell, employee, dateKey) {
             const checkmark = cell.querySelector('.checkmark');
             if (checkmark) checkmark.remove();
             
-            // Setze den Text nur, wenn keine Notiz vorhanden ist
-            if (!cellNotes[noteKey]) {
+            // Setze den Text nur, wenn keine Notiz vorhanden ist UND die Zelle nicht zusammengeführt ist
+            // Bei zusammengeführten Zellen wird der Text in restoreMergedCells gesetzt
+            if (!cellNotes[noteKey] && !isMerged) {
                 const cellText = cell.querySelector('.cell-text');
                 if (cellText) {
                     cellText.textContent = assignment.text;
@@ -3328,8 +3409,8 @@ function updateCell(cell, employee, dateKey) {
         cell.style.color = highlight.opacity && highlight.opacity > 0.6 ? '#000' : (cell.style.color || '#000');
     }
     
-    // Setze die Notiz, wenn vorhanden
-    if (cellNotes[noteKey]) {
+    // Setze die Notiz, wenn vorhanden (aber nicht bei zusammengeführten Zellen, da der Text bereits gesetzt ist)
+    if (cellNotes[noteKey] && !isMerged) {
         const cellText = cell.querySelector('.cell-text');
         if (cellText) {
             cellText.textContent = cellNotes[noteKey];
@@ -3843,10 +3924,13 @@ async function unmergeSelectedCells() {
     // Speichere die Änderungen
     await saveData('mergedCells', mergedCells);
     
-    // WICHTIG: Aktualisiere den Kalender, damit die Änderungen sichtbar werden
+            // WICHTIG: Aktualisiere den Kalender, damit die Änderungen sichtbar werden
     // Für Wochenansicht: Rufe showCurrentWeek() auf, damit die Zellen neu erstellt werden
     if (isWeekView) {
-        showCurrentWeek();
+        // Warte kurz, damit die DOM-Änderungen abgeschlossen sind
+        setTimeout(() => {
+            showCurrentWeek();
+        }, 100);
     } else {
         updateCalendar();
     }
@@ -4862,6 +4946,18 @@ function showMobileContextMenu(cell, employee, dateKey, touchEvent) {
         unmergeBtn.textContent = 'Aufteilen';
         unmergeBtn.style.cssText = 'display: block; width: 100%; padding: 10px; margin: 5px 0; background: #dc3545; color: white; border: none; border-radius: 3px;';
         unmergeBtn.addEventListener('click', async () => {
+            // WICHTIG: Stelle sicher, dass die Zelle, auf die lange gedrückt wurde, in der Markierung ist
+            if (!selectedCells.has(cell)) {
+                selectedCells.add(cell);
+                cell.classList.add('selected');
+            }
+            
+            console.log('Aufteilen-Button geklickt - Anzahl markierter Zellen:', selectedCells.size);
+            console.log('Markierte Zellen vor Aufteilen:', Array.from(selectedCells).map(c => {
+                const dateKey = getDateKeyFromCell(c);
+                return dateKey || c.getAttribute('data-date') || 'kein dateKey';
+            }));
+            
             await unmergeSelectedCells();
             menu.remove();
         });
