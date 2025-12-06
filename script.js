@@ -2071,21 +2071,42 @@ async function applyStatusToSelectedCells(status) {
     }
     
     // Verarbeite alle Zellen - konvertiere zu Array, um sicherzustellen, dass alle erfasst werden
+    // WICHTIG: Erstelle eine Kopie der selectedCells, damit wir alle Zellen verarbeiten, auch wenn sich selectedCells während der Verarbeitung ändert
     const cellsToProcess = Array.from(selectedCells);
     console.log('Verarbeite Status für', cellsToProcess.length, 'Zellen');
+    console.log('Markierte Zellen:', cellsToProcess.map(c => getDateKeyFromCell(c)));
     
-    for (const cell of cellsToProcess) {
-        if (!cell || !cell.parentElement) continue;
+    // Sortiere Zellen nach Position, um konsistente Verarbeitung zu gewährleisten
+    const sortedCells = cellsToProcess.sort((a, b) => {
+        const rowA = a.parentElement;
+        const rowB = b.parentElement;
+        if (rowA !== rowB) {
+            const rows = Array.from(document.querySelector('.calendar tbody')?.children || []);
+            return rows.indexOf(rowA) - rows.indexOf(rowB);
+        }
+        const indexA = Array.from(rowA.children).indexOf(a);
+        const indexB = Array.from(rowB.children).indexOf(b);
+        return indexA - indexB;
+    });
+    
+    for (const cell of sortedCells) {
+        if (!cell || !cell.parentElement) {
+            console.warn('Zelle oder parentElement fehlt:', cell);
+            continue;
+        }
         
         const row = cell.parentElement;
         const employeeElement = row.querySelector('td:first-child span');
-        if (!employeeElement) continue;
+        if (!employeeElement) {
+            console.warn('Kein employeeElement gefunden für Zelle:', cell);
+            continue;
+        }
         
         const employee = employeeElement.textContent;
         const dateKey = getDateKeyFromCell(cell);
         
         if (!dateKey) {
-            console.warn('Kein dateKey für Zelle gefunden:', cell);
+            console.warn('Kein dateKey für Zelle gefunden:', cell, 'data-date:', cell.getAttribute('data-date'));
             continue;
         }
         
@@ -3659,8 +3680,13 @@ async function unmergeSelectedCells() {
     // Speichere die Änderungen
     await saveData('mergedCells', mergedCells);
     
-    // Aktualisiere den Kalender
-    updateCalendar();
+    // WICHTIG: Aktualisiere den Kalender, damit die Änderungen sichtbar werden
+    // Für Wochenansicht: Rufe showCurrentWeek() auf, damit die Zellen neu erstellt werden
+    if (isWeekView) {
+        showCurrentWeek();
+    } else {
+        updateCalendar();
+    }
     
     clearSelection();
     
@@ -4006,8 +4032,20 @@ async function mergeSelectedCells() {
     let mergedAddress = cellAddresses[firstAddressKey] || '';
     
     // Speichere Referenzen zu allen zusammengeführten Zellen
-    // Verwende expandedDateKeys, um auch bereits entfernte Zellen zu berücksichtigen
-    let mergedCellIds = Array.from(expandedDateKeys).sort((a, b) => {
+    // WICHTIG: Verwende expandedDateKeys UND selectedCells, um sicherzustellen, dass alle Zellen erfasst werden
+    // Erstelle ein Set aus allen dateKeys, um Duplikate zu vermeiden
+    const allDateKeys = new Set(expandedDateKeys);
+    
+    // Füge auch alle dateKeys aus selectedCells hinzu
+    selectedCells.forEach(cell => {
+        const dateKey = getDateKeyFromCell(cell);
+        if (dateKey) {
+            allDateKeys.add(dateKey);
+        }
+    });
+    
+    // Sortiere alle dateKeys chronologisch
+    let mergedCellIds = Array.from(allDateKeys).sort((a, b) => {
         const [yearA, monthA, dayA] = a.split('-').map(Number);
         const [yearB, monthB, dayB] = b.split('-').map(Number);
         const dateA = new Date(yearA, monthA - 1, dayA);
@@ -4030,7 +4068,7 @@ async function mergeSelectedCells() {
         mergedCellIds = [firstDateKey];
     }
     
-    console.log('mergedCellIds vor Zusammenführung:', mergedCellIds, 'firstDateKey:', firstDateKey);
+    console.log('mergedCellIds vor Zusammenführung:', mergedCellIds, 'firstDateKey:', firstDateKey, 'Anzahl:', mergedCellIds.length);
     
     // Verwende CSS-Positionierung statt colspan, um Tabellenstruktur zu erhalten
     // spanCount basiert auf der Anzahl der dateKeys, nicht der Zellen im DOM
