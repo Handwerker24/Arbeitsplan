@@ -2521,7 +2521,8 @@ function exportJSON(range, year = null) {
         cellNotes: cellNotes || {},
         cellLinks: cellLinks || {},
         cellAddresses: cellAddresses || {},
-        mergedCells: mergedCells || {}
+        mergedCells: mergedCells || {},
+        cellHighlights: cellHighlights || {}  // Farbmarkierungen hinzufügen
     };
     
     // KEINE Filterung - alle Daten werden exportiert
@@ -2765,7 +2766,8 @@ function importData(file) {
                 cellNotes: JSON.parse(JSON.stringify(cellNotes)),
                 cellLinks: JSON.parse(JSON.stringify(cellLinks)),
                 cellAddresses: JSON.parse(JSON.stringify(cellAddresses)),
-                mergedCells: JSON.parse(JSON.stringify(mergedCells))
+                mergedCells: JSON.parse(JSON.stringify(mergedCells)),
+                cellHighlights: JSON.parse(JSON.stringify(cellHighlights))
             };
             console.log('Backup erstellt vor Import');
 
@@ -2816,6 +2818,11 @@ function importData(file) {
                 Object.assign(mergedCells, data.mergedCells);
             }
             
+            // Cell Highlights (Farbmarkierungen): Merge
+            if (data.cellHighlights) {
+                Object.assign(cellHighlights, data.cellHighlights);
+            }
+            
             // Speichere die gemergten Daten in Firebase
             await saveData('employees', employees);
             await saveData('assignments', assignments);
@@ -2826,6 +2833,9 @@ function importData(file) {
             await saveData('cellAddresses', cellAddresses);
             if (data.mergedCells) {
                 await saveData('mergedCells', mergedCells);
+            }
+            if (data.cellHighlights) {
+                await saveData('cellHighlights', cellHighlights);
             }
             
             // Aktualisiere die Anzeige
@@ -2906,6 +2916,9 @@ async function undoImport() {
         if (importBackup.mergedCells) {
             await saveData('mergedCells', importBackup.mergedCells);
         }
+        if (importBackup.cellHighlights) {
+            await saveData('cellHighlights', importBackup.cellHighlights);
+        }
 
         // Aktualisiere die globalen Variablen
         employees = importBackup.employees;
@@ -2918,9 +2931,9 @@ async function undoImport() {
         if (importBackup.mergedCells) {
             mergedCells = importBackup.mergedCells;
         }
-        cellNotes = importBackup.cellNotes;
-        cellLinks = importBackup.cellLinks;
-        cellAddresses = importBackup.cellAddresses;
+        if (importBackup.cellHighlights) {
+            cellHighlights = importBackup.cellHighlights;
+        }
         
         // Aktualisiere die Anzeige
         updateCalendar();

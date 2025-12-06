@@ -64,13 +64,43 @@ async function resendVerificationEmail(email, password, button) {
 }
 
 // Event Listener für das Login-Formular
-document.getElementById('loginForm').addEventListener('submit', async function(e) {
-    e.preventDefault();
+// Warte, bis das DOM vollständig geladen ist
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+        setupLoginForm();
+    });
+} else {
+    // DOM ist bereits geladen
+    setupLoginForm();
+}
+
+function setupLoginForm() {
+    const loginForm = document.getElementById('loginForm');
+    if (!loginForm) {
+        console.error('Login-Formular nicht gefunden');
+        return;
+    }
     
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-    const errorMessage = document.getElementById('errorMessage');
-    const loginButton = document.getElementById('loginButton') || document.querySelector('button[type="submit"]');
+    loginForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        const errorMessage = document.getElementById('errorMessage');
+        const loginButton = document.getElementById('loginButton') || document.querySelector('button[type="submit"]');
+        
+        // Prüfe, ob alle Elemente existieren
+        if (!emailInput || !passwordInput) {
+            console.error('E-Mail- oder Passwort-Feld nicht gefunden');
+            if (errorMessage) {
+                errorMessage.textContent = 'Fehler: Formularfelder nicht gefunden';
+                errorMessage.style.display = 'block';
+            }
+            return;
+        }
+        
+        const email = emailInput.value;
+        const password = passwordInput.value;
     
     // Zeige Ladeanzeige
     if (loginButton) {
