@@ -1095,7 +1095,8 @@ function restoreMergedCells() {
                         console.log('restoreMergedCells: Zelle gefunden zum Entfernen:', dateKey);
                         cellsToRemove.push(cellToRemove);
                     } else {
-                        console.warn('restoreMergedCells: Zelle NICHT gefunden zum Entfernen:', dateKey);
+                        // Zelle wurde bereits entfernt (normal, wenn restoreMergedCells mehrfach aufgerufen wird)
+                        // Keine Warnung ausgeben, da dies erwartetes Verhalten ist
                     }
                 }
             }
