@@ -362,6 +362,27 @@ if (logoutButton) {
     });
 }
 
+// How To – Kurzanleitung öffnen/schließen
+const howToButton = document.getElementById('howToButton');
+const howToModal = document.getElementById('howToModal');
+const closeHowTo = document.getElementById('closeHowTo');
+const closeHowToBtn = document.getElementById('closeHowToBtn');
+if (howToButton && howToModal) {
+    howToButton.addEventListener('click', () => {
+        howToModal.style.display = 'block';
+    });
+}
+function closeHowToModal() {
+    if (howToModal) howToModal.style.display = 'none';
+}
+if (closeHowTo) closeHowTo.addEventListener('click', closeHowToModal);
+if (closeHowToBtn) closeHowToBtn.addEventListener('click', closeHowToModal);
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && howToModal && howToModal.style.display === 'block') {
+        closeHowToModal();
+    }
+});
+
 // DOM-Elemente (werden beim Initialisieren gesetzt)
 let yearGrid, monthGrid, calendarBody, headerRow, employeeModal, employeeNameInput;
 let deleteEmployeeModal, employeeToDeleteSpan, infoField, infoText, zoomOutButton;

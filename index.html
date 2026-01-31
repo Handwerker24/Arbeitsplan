@@ -59,6 +59,7 @@
     <div class="container">
         <div id="storageModeBanner" class="storage-mode-banner" style="display: none;" role="alert"></div>
         <header>
+            <button id="howToButton" class="how-to-button" type="button" title="Kurzanleitung">How To</button>
             <h1>Arbeitsplan</h1>
             <button id="logoutButton" class="logout-button">Ausloggen</button>
         </header>
@@ -251,6 +252,37 @@
             <div id="evaluationTable" class="evaluation-table-container" style="min-height: 80px;"></div>
             <div class="modal-actions" style="margin-top: 20px;">
                 <button id="closeEvaluation" class="modal-btn-secondary">Schließen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: How To – Kurzanleitung -->
+    <div id="howToModal" class="modal" style="display: none;" role="dialog" aria-labelledby="howToTitle" aria-modal="true">
+        <div class="modal-content how-to-modal-content">
+            <button id="closeHowTo" class="close-button-x" type="button" aria-label="Schließen">×</button>
+            <h2 id="howToTitle">How To – Plan benutzen & bearbeiten</h2>
+            <div class="how-to-body">
+                <section>
+                    <h3>Tastenkürzel</h3>
+                    <ul>
+                        <li><kbd>Strg</kbd>+<kbd>Z</kbd> – Rückgängig</li>
+                        <li><kbd>Strg</kbd>+<kbd>C</kbd> – Markierte Felder kopieren</li>
+                        <li><kbd>Strg</kbd>+<kbd>V</kbd> – In markierte Felder einfügen</li>
+                        <li><kbd>Strg</kbd>+<kbd>X</kbd> – Markierte Felder zusammenführen (mind. 2 Zellen) oder zusammengeführte Felder wieder auftrennen (1 zusammengeführtes Feld markieren)</li>
+                        <li><kbd>Esc</kbd> – Dialog/Modals schließen</li>
+                    </ul>
+                </section>
+                <section>
+                    <h3>Status & Farbmarkierung</h3>
+                    <p>Mit der <strong>rechten Maustaste</strong> eine Zelle anklicken, um sie auszuwählen und zu markieren. <strong>Rechte Maustaste gedrückt halten</strong> und über weitere Felder ziehen – so lassen sich mehrere Felder markieren; beim Loslassen öffnet sich das Menü zum Belegen der markierten Felder (Status wie Urlaub, Krank, … oder Farbmarkierung).</p>
+                </section>
+                <section>
+                    <h3>Notizen, Link, Adresse</h3>
+                    <p>Zelle anklicken (oder doppelklicken) öffnet das Notizen-Fenster: Text, Link („Ordner öffnen“) und Adresse („In Maps öffnen“) eintragen.</p>
+                </section>
+            </div>
+            <div class="modal-actions">
+                <button id="closeHowToBtn" class="modal-btn-secondary" type="button">Schließen</button>
             </div>
         </div>
     </div>
