@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Arbeitsplan</title>
+    <link rel="icon" type="image/png" href="icon.png?v=2">
+    <link rel="apple-touch-icon" href="icon.png?v=2">
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
@@ -55,6 +57,7 @@
 </head>
 <body>
     <div class="container">
+        <div id="storageModeBanner" class="storage-mode-banner" style="display: none;" role="alert"></div>
         <header>
             <h1>Arbeitsplan</h1>
             <button id="logoutButton" class="logout-button">Ausloggen</button>
@@ -86,8 +89,8 @@
             </div>
             <div class="highlight-opacity-row">
                 <label for="highlightOpacity">Deckkraft:</label>
-                <input type="range" id="highlightOpacity" min="10" max="100" value="40">
-                <span id="highlightOpacityValue">40%</span>
+                <input type="range" id="highlightOpacity" min="10" max="100" value="30">
+                <span id="highlightOpacityValue">30%</span>
             </div>
             <div class="highlight-swatches">
                 <!-- Vordefinierte Farbpalette (ca. 30 Farben) -->
@@ -158,6 +161,7 @@
             <input type="file" id="importData" accept=".json" style="display: none;">
             <button id="importDataBtn">Daten importieren</button>
             <button id="showAuditLog">Änderungsprotokoll</button>
+            <button id="showEvaluation">Auswertung</button>
         </div>
     </div>
 
@@ -166,8 +170,10 @@
         <div class="modal-content">
             <h2>Mitarbeiter hinzufügen</h2>
             <input type="text" id="employeeName" placeholder="Name des Mitarbeiters">
-            <button id="saveEmployee">Speichern</button>
-            <button id="cancelEmployee">Abbrechen</button>
+            <div class="modal-actions">
+                <button id="saveEmployee" class="modal-btn-primary">Speichern</button>
+                <button id="cancelEmployee" class="modal-btn-secondary">Abbrechen</button>
+            </div>
         </div>
     </div>
 
@@ -176,8 +182,10 @@
         <div class="modal-content">
             <h2>Mitarbeiter entfernen</h2>
             <p>Möchten Sie den Mitarbeiter <span id="employeeToDelete"></span> wirklich entfernen?</p>
-            <button id="confirmDelete">Ja</button>
-            <button id="cancelDelete">Nein</button>
+            <div class="modal-buttons">
+                <button id="confirmDelete" class="modal-btn-primary">Ja</button>
+                <button id="cancelDelete" class="modal-btn-secondary">Nein</button>
+            </div>
         </div>
     </div>
 
@@ -222,8 +230,27 @@
                 </div>
             </div>
             <div class="modal-buttons">
-                <button id="confirmExport">Exportieren</button>
-                <button id="cancelExport">Abbrechen</button>
+                <button id="confirmExport" class="modal-btn-primary">Exportieren</button>
+                <button id="cancelExport" class="modal-btn-secondary">Abbrechen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal für Auswertung -->
+    <div id="evaluationModal" class="modal" style="display: none;">
+        <div class="modal-content evaluation-modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+            <h2>Auswertung</h2>
+            <p class="modal-description">Jahr auswählen und Auswertung anzeigen: wie viele Tage pro Mitarbeiter für Urlaub, Krankheit, Unbezahlter Urlaub, Schule, Feiertag und Kurzarbeit belegt sind.</p>
+            <div class="evaluation-controls">
+                <label>
+                    <strong>Jahr:</strong>
+                    <select id="evaluationYear"></select>
+                </label>
+                <button id="generateEvaluation" class="modal-btn-primary">Auswertung anzeigen</button>
+            </div>
+            <div id="evaluationTable" class="evaluation-table-container" style="min-height: 80px;"></div>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button id="closeEvaluation" class="modal-btn-secondary">Schließen</button>
             </div>
         </div>
     </div>
@@ -235,8 +262,8 @@
             <p>Daten wurden erfolgreich importiert!</p>
             <p>Möchten Sie die Änderung rückgängig machen?</p>
             <div class="modal-buttons">
-                <button id="confirmUndo">Ja</button>
-                <button id="cancelUndo">Nein</button>
+                <button id="confirmUndo" class="modal-btn-primary">Ja</button>
+                <button id="cancelUndo" class="modal-btn-secondary">Nein</button>
             </div>
         </div>
     </div>

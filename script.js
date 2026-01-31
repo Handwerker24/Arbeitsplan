@@ -17,11 +17,32 @@ let isWeekView = false; // Neue Variable für den Ansichtsmodus
 let mergedCells = {}; // Speichert Zusammenführungen: { "employee-dateKey": { mergedCells: [...], removedCells: [...] } }
 // Globale Referenzen / Einstellungen für Farbmarkierung (werden gespeichert)
 let selectedHighlightColor = '#fff176'; // Standard-Hervorhebungsfarbe
-let selectedHighlightOpacity = 0.4;     // Standard-Deckkraft
+let selectedHighlightOpacity = 0.3;     // Standard-Deckkraft (30%)
 // Auto-Refresh / Bearbeitungsstatus
 let autoRefreshInterval = null;
 let isUserEditing = false;
 // firebaseDB wird in firebase-simple.js deklariert
+
+// Testmodus / Nur localStorage (wenn auf localhost oder online ohne DB-Zugriff)
+// Leerer hostname = file:// oder lokaler Kontext → Timeout/Testmodus nutzen
+function isLocalhost() {
+    const h = (window.location.hostname || '').toLowerCase();
+    return h === '' || h === 'localhost' || h === '127.0.0.1';
+}
+
+function showStorageModeBanner(mode) {
+    const el = document.getElementById('storageModeBanner');
+    if (!el) return;
+    el.classList.remove('storage-mode-test', 'storage-mode-warning');
+    if (mode === 'test') {
+        el.className = 'storage-mode-banner storage-mode-test';
+        el.textContent = 'Lokal – Testmodus: Nur localStorage. Keine Verbindung zur Datenbank (z. B. App Check). Änderungen werden nicht in Firebase gespeichert.';
+    } else {
+        el.className = 'storage-mode-banner storage-mode-warning';
+        el.textContent = 'Warnung: Kein Zugriff auf die Datenbank – Die Anwendung läuft nur mit lokalen Daten. Bitte prüfen Sie die Verbindung und App Check. Änderungen werden nicht in Firebase gespeichert.';
+    }
+    el.style.display = 'block';
+}
 
 // Undo-Funktionalität
 let undoStack = [];
@@ -40,6 +61,8 @@ async function initializeFirebase() {
     if (typeof firebase === 'undefined') {
         console.error('Firebase SDK nicht geladen - verwende localStorage');
         loadDataFromLocalStorage();
+        window.useLocalStorageOnly = true;
+        showStorageModeBanner(isLocalhost() ? 'test' : 'database-unavailable');
         return;
     }
     
@@ -68,9 +91,18 @@ async function initializeFirebase() {
     if (window.firebaseDB) {
         console.log('Firebase DB Instanz gefunden, lade Daten...');
         
-        // Lade alle Daten aus Firebase
+        // Auf localhost: Timeout, damit bei App-Check-Fehler (403) nach kurzer Zeit Testmodus startet
+        const DB_LOAD_TIMEOUT_MS = 3000;
+        const loadPromise = window.firebaseDB.loadAllData();
+        const dataPromise = isLocalhost()
+            ? Promise.race([
+                loadPromise,
+                new Promise((_, reject) => setTimeout(() => reject(new Error('DB_LOAD_TIMEOUT')), DB_LOAD_TIMEOUT_MS))
+            ])
+            : loadPromise;
+
         try {
-            const data = await window.firebaseDB.loadAllData();
+            const data = await dataPromise;
             console.log('[initializeFirebase] Rohdaten aus Firebase:', data);
             
             // Lade Daten aus Firebase
@@ -135,13 +167,21 @@ async function initializeFirebase() {
                 console.log('[initializeFirebase] Migration zu Firebase abgeschlossen');
             }
         } catch (error) {
-            console.error('Fehler beim Laden aus Firebase:', error);
-            console.log('Verwende localStorage als Fallback');
+            if (error && error.message === 'DB_LOAD_TIMEOUT') {
+                console.warn('Firebase-Laden auf localhost nach ' + (DB_LOAD_TIMEOUT_MS / 1000) + ' s abgelaufen (z. B. App Check) – Testmodus.');
+            } else {
+                console.error('Fehler beim Laden aus Firebase:', error);
+            }
+            console.log('%cTestmodus / Kein DB-Zugriff: Verwende nur localStorage. Banner wird angezeigt.', 'color: #ff9800; font-weight: bold;');
             loadDataFromLocalStorage();
+            window.useLocalStorageOnly = true;
+            showStorageModeBanner(isLocalhost() ? 'test' : 'database-unavailable');
         }
     } else {
         console.warn('FirebaseDB nach', maxAttempts, 'Versuchen nicht verfügbar, verwende localStorage');
         loadDataFromLocalStorage();
+        window.useLocalStorageOnly = true;
+        showStorageModeBanner(isLocalhost() ? 'test' : 'database-unavailable');
     }
 }
 
@@ -171,6 +211,13 @@ async function saveData(key, data) {
         console.log(`[saveData] ${key} in localStorage gespeichert`);
     } catch (lsError) {
         console.error(`[saveData] Fehler beim Speichern in localStorage:`, lsError);
+    }
+    
+    // Testmodus / Kein DB-Zugriff: Nur localStorage, kein Firebase
+    if (window.useLocalStorageOnly === true) {
+        console.log(`[saveData] Testmodus – ${key} nur in localStorage gespeichert (kein Firebase)`);
+        setTimeout(() => { isUserEditing = false; }, 500);
+        return;
     }
     
     // Dann versuchen, in Firebase zu speichern
@@ -240,7 +287,9 @@ function showAuditLog() {
             <div class="audit-log-container">
                 ${logEntries.length === 0 ? '<p>Keine Einträge vorhanden.</p>' : logHTML}
             </div>
-            <button id="closeAuditLog" style="margin-top: 20px;">Schließen</button>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button id="closeAuditLog" class="modal-btn-secondary">Schließen</button>
+            </div>
         </div>
     `;
     
@@ -728,6 +777,8 @@ document.addEventListener('keydown', async (e) => {
         await saveData('cellAddresses', cellAddresses);
         await saveData('cellHighlights', cellHighlights);
         await saveData('assignments', assignments);
+        // Sofort zusammengelegte Felder wiederherstellen, damit der Plan nicht bis zur nächsten Aktualisierung als kurzes Feld angezeigt wird
+        restoreMergedCells();
     }
     
     // Strg+X für Feld-Zusammenführung
@@ -794,13 +845,13 @@ async function initializeApp() {
 
         // Deckkraft-Regler initialisieren
         if (highlightOpacityInput && highlightOpacityValue) {
-            // Startwert aus Input übernehmen
-            const startVal = parseInt(highlightOpacityInput.value || '40', 10);
+            // Startwert aus Input übernehmen (Standard 30%)
+            const startVal = parseInt(highlightOpacityInput.value || '30', 10);
             selectedHighlightOpacity = Math.max(0.1, Math.min(1, startVal / 100));
             highlightOpacityValue.textContent = `${startVal}%`;
 
             highlightOpacityInput.addEventListener('input', () => {
-                const val = parseInt(highlightOpacityInput.value || '40', 10);
+                const val = parseInt(highlightOpacityInput.value || '30', 10);
                 selectedHighlightOpacity = Math.max(0.1, Math.min(1, val / 100));
                 highlightOpacityValue.textContent = `${val}%`;
             });
@@ -907,6 +958,16 @@ function initializeMonthGrid() {
 function getWeekdayName(date) {
     const weekdays = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
     return weekdays[date.getDay()];
+}
+
+/** ISO 8601 Kalenderwoche (KW) für ein Datum */
+function getISOWeekNumber(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7; // Montag = 1, Sonntag = 7
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return weekNo;
 }
 
 function updateCalendar() {
@@ -1504,14 +1565,18 @@ function setupDesktopMonthView() {
         const isWeekend = date.getDay() === 0 || date.getDay() === 6;
         const th = document.createElement('th');
         
+        const kwSpan = document.createElement('span');
+        kwSpan.className = 'kw-header';
+        kwSpan.textContent = 'KW ' + getISOWeekNumber(date);
+        th.appendChild(kwSpan);
+        
         const weekdaySpan = document.createElement('span');
         weekdaySpan.className = 'weekday-header';
         weekdaySpan.textContent = getWeekdayName(date);
+        th.appendChild(weekdaySpan);
         
         const daySpan = document.createElement('span');
         daySpan.textContent = day;
-        
-        th.appendChild(weekdaySpan);
         th.appendChild(daySpan);
         
         if (isWeekend) th.classList.add('weekend');
@@ -1775,6 +1840,13 @@ function setupDesktopMonthView() {
                     touchStartCell = null;
                     touchMoved = false;
                 });
+
+                // Desktop: Rechtsklick öffnet Bearbeitungsleiste (Kontextmenü) statt Browsermenü
+                cell.addEventListener('contextmenu', (e) => {
+                    if (window.innerWidth <= 768) return;
+                    e.preventDefault();
+                    showDesktopContextMenu(cell, employee, dateKey, e);
+                });
                 
                 // Setze data-date Attribut für einfachere Identifikation
                 cell.setAttribute('data-date', dateKey);
@@ -1830,20 +1902,20 @@ function showCurrentWeek() {
         date.setDate(monday.getDate() + i);
         
         const th = document.createElement('th');
+        const kwSpan = document.createElement('span');
+        kwSpan.className = 'kw-header';
+        kwSpan.textContent = 'KW ' + getISOWeekNumber(date);
+        th.appendChild(kwSpan);
         const weekdaySpan = document.createElement('span');
         weekdaySpan.className = 'weekday-header';
         weekdaySpan.textContent = getWeekdayName(date);
-        
+        th.appendChild(weekdaySpan);
         const daySpan = document.createElement('span');
         daySpan.textContent = date.getDate();
-        
-        th.appendChild(weekdaySpan);
         th.appendChild(daySpan);
-        
         if (date.getDay() === 0 || date.getDay() === 6) {
             th.classList.add('weekend');
         }
-        
         headerRow.appendChild(th);
     }
     
@@ -2045,6 +2117,13 @@ function showCurrentWeek() {
                 touchStartCell = null;
                 touchMoved = false;
             });
+
+            // Desktop: Rechtsklick öffnet Bearbeitungsleiste (Kontextmenü) statt Browsermenü
+            cell.addEventListener('contextmenu', (e) => {
+                if (window.innerWidth <= 768) return;
+                e.preventDefault();
+                showDesktopContextMenu(cell, employee, dateKey, e);
+            });
             
             row.appendChild(cell);
         }
@@ -2171,6 +2250,24 @@ window.addEventListener('resize', () => {
     updateCalendar();
 });
 
+// Gibt den logischen Spaltenbereich (Start- und Endindex) einer Zelle in einer Zeile zurück.
+// Berücksichtigt colspan: zusammengelegte Felder zählen mit der Anzahl der gespannten Spalten.
+function getLogicalColumnRange(row, targetCell) {
+    if (!row || !targetCell) return { start: 0, end: 0 };
+    let actualCol = 0;
+    const children = Array.from(row.children);
+    for (let i = 0; i < children.length; i++) {
+        const cell = children[i];
+        if (cell.classList.contains('name-cell') || cell.hasAttribute('data-merged-placeholder')) continue;
+        const colspan = parseInt(cell.getAttribute('colspan') || '1', 10);
+        const cellStartCol = actualCol;
+        const cellEndCol = actualCol + colspan - 1;
+        if (cell === targetCell) return { start: cellStartCol, end: cellEndCol };
+        actualCol += colspan;
+    }
+    return { start: 0, end: 0 };
+}
+
 function selectCellsBetween(startCell, endCell) {
     if (!startCell || !endCell) return;
     
@@ -2179,21 +2276,19 @@ function selectCellsBetween(startCell, endCell) {
     
     // Prüfe, ob die Zellen in derselben Zeile sind
     if (startRow !== endRow) {
-        // Wenn nicht in derselben Zeile, markiere nur die Zellen in der Startzeile bis zur Endzeile
+        // Wenn nicht in derselben Zeile: logische Spalten verwenden (zusammengelegte Felder = mehrere Spalten)
         const rows = Array.from(document.querySelector('.calendar tbody').children);
         const startRowIndex = rows.indexOf(startRow);
         const endRowIndex = rows.indexOf(endRow);
         const minRow = Math.min(startRowIndex, endRowIndex);
         const maxRow = Math.max(startRowIndex, endRowIndex);
         
-        // Finde die Spaltenindizes
-        const startIndex = Array.from(startRow.children).indexOf(startCell);
-        const endIndex = Array.from(endRow.children).indexOf(endCell);
-        const minCol = Math.min(startIndex, endIndex);
-        const maxCol = Math.max(startIndex, endIndex);
+        const startRange = getLogicalColumnRange(startRow, startCell);
+        const endRange = getLogicalColumnRange(endRow, endCell);
+        const minCol = Math.min(startRange.start, endRange.start);
+        const maxCol = Math.max(startRange.end, endRange.end);
         
-        // Markiere alle Zellen im Bereich
-        // WICHTIG: Berücksichtige colspan bei zusammengeführten Zellen
+        // Markiere alle Zellen im Bereich (logische Spalten, colspan wird berücksichtigt)
         for (let row = minRow; row <= maxRow; row++) {
             const currentRow = rows[row];
             if (!currentRow) continue;
@@ -2204,18 +2299,13 @@ function selectCellsBetween(startCell, endCell) {
                 if (!cell || cell.classList.contains('name-cell') || cell.hasAttribute('data-merged-placeholder')) {
                     continue;
                 }
-                
-                // Prüfe, ob die Zelle zusammengeführt ist
                 const colspan = parseInt(cell.getAttribute('colspan') || '1', 10);
                 const cellStartCol = actualCol;
                 const cellEndCol = actualCol + colspan - 1;
-                
-                // Prüfe, ob diese Zelle im markierten Bereich liegt
                 if (cellStartCol <= maxCol && cellEndCol >= minCol) {
                     cell.classList.add('selected');
                     selectedCells.add(cell);
                 }
-                
                 actualCol += colspan;
             }
         }
@@ -2342,6 +2432,7 @@ async function applyStatusToSelectedCells(status) {
     }
     
     // Entferne alle Farbmarkierungen auf einmal
+    const highlightsRemovedSet = new Set(highlightsToRemove); // Merken, welche Zellen eine Farbmarkierung hatten
     if (highlightsToRemove.length > 0) {
         highlightsToRemove.forEach(key => {
             delete cellHighlights[key];
@@ -2406,8 +2497,12 @@ async function applyStatusToSelectedCells(status) {
 
         // Prüfe, ob die Zelle bereits den gleichen Status hat
         const currentAssignment = assignments[employee][dateKey];
-        if (status === 'abgerechnet' && currentAssignment && currentAssignment.status === 'abgerechnet') {
-            // Wenn die Zelle bereits als "Abgerechnet" markiert ist, entferne die Markierung
+        const highlightKey = `${employee}-${dateKey}`;
+        const hadHighlight = highlightsRemovedSet.has(highlightKey);
+        // Bei "abgerechnet": Nur toggeln (Status entfernen), wenn die Zelle KEINE Farbmarkierung hatte.
+        // Hatte die Zelle eine Farbmarkierung, wurde diese bereits oben entfernt – dann Status setzen/behalten (nicht toggeln).
+        if (status === 'abgerechnet' && currentAssignment && currentAssignment.status === 'abgerechnet' && !hadHighlight) {
+            // Wenn die Zelle bereits als "Abgerechnet" markiert ist (ohne Farbmarkierung), entferne die Markierung
             delete assignments[employee][dateKey];
             cell.style.backgroundColor = '';
             cell.style.color = 'black';
@@ -3784,16 +3879,14 @@ ueberstundenButton.addEventListener('click', async () => {
 
 // Funktion zur Generierung der Auswertung
 function generateEvaluation(year) {
-    const statusButtons = ['urlaub', 'krank', 'unbezahlt', 'schulung', 'feiertag', 'kurzarbeit', 'abgerechnet', 'ueberstunden'];
+    const statusButtons = ['urlaub', 'krank', 'unbezahlt', 'schulung', 'feiertag', 'kurzarbeit'];
     const statusLabels = {
         'urlaub': 'Urlaub',
         'krank': 'Krankheit',
         'unbezahlt': 'Unbezahlter Urlaub',
         'schulung': 'Schule',
         'feiertag': 'Feiertag',
-        'kurzarbeit': 'Kurzarbeit',
-        'abgerechnet': 'Abgerechnet',
-        'ueberstunden': 'Überstunden frei'
+        'kurzarbeit': 'Kurzarbeit'
     };
     
     // Filtere Mitarbeiter, die im gewählten Jahr aktiv waren
@@ -4086,6 +4179,11 @@ async function unmergeSelectedCells() {
                             showInfoField(newCell, employee, dateKey, true);
                         });
                     }
+                    newCell.addEventListener('contextmenu', (e) => {
+                        if (window.innerWidth <= 768) return;
+                        e.preventDefault();
+                        showDesktopContextMenu(newCell, employee, dateKey, e);
+                    });
                     
                     // Füge die Zelle ein
                     if (row.children[firstCellIndex + i]) {
@@ -4936,6 +5034,144 @@ if (clearSelectionBtn) {
         clearSelection();
     }
     });
+}
+
+// Desktop-Kontextmenü bei Rechtsklick (nur für Bildschirmbreite > 768px)
+function showDesktopContextMenu(cell, employee, dateKey, e) {
+    if (window.innerWidth <= 768) return;
+
+    // Wenn die Zelle nicht in der Auswahl ist: nur diese Zelle auswählen
+    if (!selectedCells.has(cell)) {
+        clearSelection();
+        selectedCells.add(cell);
+        cell.classList.add('selected');
+    }
+
+    const existing = document.getElementById('desktopContextMenu');
+    if (existing) existing.remove();
+
+    const menu = document.createElement('div');
+    menu.id = 'desktopContextMenu';
+    menu.className = 'desktop-context-menu';
+
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+    const menuWidth = 320;
+    const menuHeight = 420;
+    let left = e.clientX;
+    let top = e.clientY;
+    if (left + menuWidth > viewportW - 10) left = viewportW - menuWidth - 10;
+    if (left < 10) left = 10;
+    if (top + menuHeight > viewportH - 10) top = viewportH - menuHeight - 10;
+    if (top < 10) top = 10;
+
+    menu.style.cssText = `position: fixed; left: ${left}px; top: ${top}px; width: ${menuWidth}px; z-index: 10000;`;
+
+    // Status-Buttons
+    const statusData = [
+        { status: 'urlaub', text: 'Urlaub', color: '#28a745' },
+        { status: 'krank', text: 'Krankheit', color: '#dc3545' },
+        { status: 'unbezahlt', text: 'Unbezahlt', color: '#ffc107' },
+        { status: 'schulung', text: 'Schule', color: '#6f42c1' },
+        { status: 'feiertag', text: 'Feiertag', color: '#17a2b8' },
+        { status: 'kurzarbeit', text: 'Kurzarbeit', color: '#795548' },
+        { status: 'ueberstunden', text: 'Überstunden', color: '#20c997' },
+        { status: 'abgerechnet', text: 'Abgerechnet', color: '#d4edda' }
+    ];
+
+    const statusWrap = document.createElement('div');
+    statusWrap.className = 'desktop-context-menu-status-wrap';
+    statusData.forEach(({ status, text, color }) => {
+        const btn = document.createElement('button');
+        btn.className = 'status-button desktop-context-status-btn';
+        btn.dataset.status = status;
+        btn.textContent = text;
+        btn.style.backgroundColor = color;
+        btn.style.color = (status === 'abgerechnet' || status === 'unbezahlt') ? '#000' : '#fff';
+        btn.addEventListener('click', async () => {
+            await applyStatusToSelectedCells(status);
+            closeMenu();
+        });
+        statusWrap.appendChild(btn);
+    });
+    menu.appendChild(statusWrap);
+
+    // Farbmarkierung
+    const highlightTitle = document.createElement('div');
+    highlightTitle.className = 'highlight-title';
+    highlightTitle.textContent = 'Farbmarkierung';
+    menu.appendChild(highlightTitle);
+
+    const opacityRow = document.createElement('div');
+    opacityRow.className = 'highlight-opacity-row';
+    const opacityLabel = document.createElement('label');
+    opacityLabel.textContent = 'Deckkraft:';
+    const opacitySlider = document.createElement('input');
+    opacitySlider.type = 'range';
+    opacitySlider.min = '10';
+    opacitySlider.max = '100';
+    opacitySlider.value = String(Math.round(selectedHighlightOpacity * 100));
+    const opacityValue = document.createElement('span');
+    opacityValue.textContent = `${Math.round(selectedHighlightOpacity * 100)}%`;
+    opacitySlider.addEventListener('input', () => {
+        const val = parseInt(opacitySlider.value || '30', 10);
+        selectedHighlightOpacity = Math.max(0.1, Math.min(1, val / 100));
+        opacityValue.textContent = `${val}%`;
+    });
+    opacityRow.appendChild(opacityLabel);
+    opacityRow.appendChild(opacitySlider);
+    opacityRow.appendChild(opacityValue);
+    menu.appendChild(opacityRow);
+
+    const swatchColors = ['#ff5252','#ff8a80','#ffb74d','#ffd54f','#fff176','#cddc39','#aed581','#81c784','#4caf50','#1b5e20','#80cbc4','#4db6ac','#26a69a','#0097a7','#00bcd4','#4fc3f7','#2196f3','#1e88e5','#3f51b5','#5c6bc0','#9c27b0','#ba68c8','#e91e63','#f06292','#795548','#8d6e63','#b0bec5','#90a4ae','#eeeeee','#bdbdbd'];
+    const swatchesWrap = document.createElement('div');
+    swatchesWrap.className = 'highlight-swatches desktop-context-swatches';
+    swatchColors.forEach(hex => {
+        const swatch = document.createElement('div');
+        swatch.className = 'highlight-color-swatch' + (selectedHighlightColor === hex ? ' selected' : '');
+        swatch.setAttribute('data-color', hex);
+        swatch.style.backgroundColor = hex;
+        swatch.addEventListener('click', () => {
+            swatchesWrap.querySelectorAll('.highlight-color-swatch').forEach(s => s.classList.remove('selected'));
+            swatch.classList.add('selected');
+            selectedHighlightColor = hex;
+        });
+        swatchesWrap.appendChild(swatch);
+    });
+    menu.appendChild(swatchesWrap);
+
+    const highlightBtns = document.createElement('div');
+    highlightBtns.className = 'highlight-header-buttons desktop-context-highlight-btns';
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'highlight-apply-button';
+    applyBtn.textContent = 'Auf markierte Felder anwenden';
+    applyBtn.addEventListener('click', () => {
+        applyHighlightToSelectedCells();
+        closeMenu();
+    });
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'highlight-clear-button';
+    clearBtn.textContent = 'Farbmarkierung löschen';
+    clearBtn.addEventListener('click', async () => {
+        await clearHighlightsFromSelectedCells();
+        closeMenu();
+    });
+    highlightBtns.appendChild(applyBtn);
+    highlightBtns.appendChild(clearBtn);
+    menu.appendChild(highlightBtns);
+
+    function closeMenu() {
+        const m = document.getElementById('desktopContextMenu');
+        if (m) m.remove();
+        document.removeEventListener('mousedown', closeOnClickOutside);
+    }
+    function closeOnClickOutside(ev) {
+        if (menu.contains(ev.target)) return;
+        closeMenu();
+    }
+
+    document.body.appendChild(menu);
+    setTimeout(() => document.addEventListener('mousedown', closeOnClickOutside), 0);
 }
 
 // Mobile Kontextmenü für Long-Press

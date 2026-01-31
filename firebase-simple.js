@@ -76,9 +76,8 @@ class FirebaseDB {
             return data;
         } catch (error) {
             console.error(`Fehler beim Laden: ${error.message}`);
-            // Fallback zu localStorage
-            const data = localStorage.getItem(key);
-            return data ? JSON.parse(data) : null;
+            // Fehler durchreichen, damit script.js Testmodus/Banner anzeigen kann (z. B. bei App Check 403)
+            throw error;
         }
     }
 
