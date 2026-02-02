@@ -666,6 +666,12 @@ td:first-child {
     line-height: 1.4;
     margin-bottom: 10px;
     box-sizing: border-box;
+    color: #000;
+    background-color: #fff;
+}
+
+#infoText::placeholder {
+    color: #666;
 }
 
 .info-field textarea:focus {

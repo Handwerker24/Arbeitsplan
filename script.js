@@ -2435,31 +2435,29 @@ async function applyStatusToSelectedCells(status) {
         'ueberstunden': '#20c997'
     };
 
-    // Sammle alle Zellen, die geändert werden müssen, und entferne Farbmarkierungen
-    const highlightsToRemove = [];
+    // Bei JEDEM Status-Button: Inhalt der Zelle bereinigen (Notiz, Link, Adresse, Farbmarkierung löschen),
+    // damit der Buttoneintrag (z. B. Krankheit) die Zelle vollständig überschreibt – nicht nur farblich.
+    const highlightsRemovedSet = new Set();
     for (const cell of selectedCells) {
         const row = cell.parentElement;
         const employee = row.querySelector('td:first-child span').textContent;
         const dateKey = getDateKeyFromCell(cell);
         if (!dateKey) continue;
-        
-        // Für "abgerechnet": Sammle Farbmarkierungen zum Entfernen
-        if (status === 'abgerechnet') {
-            const highlightKey = `${employee}-${dateKey}`;
-            if (cellHighlights[highlightKey]) {
-                highlightsToRemove.push(highlightKey);
-            }
-        }
+        const noteKey = `${employee}-${dateKey}`;
+        const linkKey = `${employee}-${dateKey}-link`;
+        const addressKey = `${employee}-${dateKey}-address`;
+        const highlightKey = `${employee}-${dateKey}`;
+        if (cellHighlights[highlightKey]) highlightsRemovedSet.add(highlightKey);
+        delete cellNotes[noteKey];
+        delete cellLinks[linkKey];
+        delete cellAddresses[addressKey];
+        delete cellHighlights[highlightKey];
+        cell.removeAttribute('data-info');
     }
-    
-    // Entferne alle Farbmarkierungen auf einmal
-    const highlightsRemovedSet = new Set(highlightsToRemove); // Merken, welche Zellen eine Farbmarkierung hatten
-    if (highlightsToRemove.length > 0) {
-        highlightsToRemove.forEach(key => {
-            delete cellHighlights[key];
-        });
-        await saveData('cellHighlights', cellHighlights);
-    }
+    await saveData('cellNotes', cellNotes);
+    await saveData('cellLinks', cellLinks);
+    await saveData('cellAddresses', cellAddresses);
+    await saveData('cellHighlights', cellHighlights);
     
     // WICHTIG: Sammle zuerst alle dateKeys und employee-Informationen, BEVOR wir die Zellen verarbeiten
     // Das verhindert, dass Zellen während der Verarbeitung verloren gehen
@@ -2619,11 +2617,9 @@ async function applyStatusToSelectedCells(status) {
         });
     });
     
-    // Bei Status "abgerechnet" Kalender neu aufbauen,
-    // damit zusammengeführte Felder sofort wieder korrekt dargestellt werden
-    if (status === 'abgerechnet') {
-        updateCalendar();
-    }
+    // Sofort Kalender neu aufbauen nach jedem Status-Button,
+    // damit zusammengeführte Felder nicht kurz als Einzelfeld erscheinen und die Tabelle nicht rückt
+    updateCalendar();
     
     clearSelection();
 }
