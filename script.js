@@ -2435,12 +2435,17 @@ async function applyStatusToSelectedCells(status) {
         'ueberstunden': '#20c997'
     };
 
-    // Bei JEDEM Status-Button: Inhalt der Zelle bereinigen (Notiz, Link, Adresse, Farbmarkierung löschen),
-    // damit der Buttoneintrag (z. B. Krankheit) die Zelle vollständig überschreibt – nicht nur farblich.
+    // WICHTIG: Zellenliste (cellData) und Bereinigung VOR dem ersten await erledigen!
+    // Sonst läuft nach await der Dokument-Klick-Handler (Klick war außerhalb .calendar-container),
+    // clearSelection() leert selectedCells, und wir verarbeiten 0 Zellen.
     const highlightsRemovedSet = new Set();
+    const cellData = [];
     for (const cell of selectedCells) {
+        if (!cell || !cell.parentElement) continue;
         const row = cell.parentElement;
-        const employee = row.querySelector('td:first-child span').textContent;
+        const employeeElement = row.querySelector('td:first-child span');
+        if (!employeeElement) continue;
+        const employee = employeeElement.textContent;
         const dateKey = getDateKeyFromCell(cell);
         if (!dateKey) continue;
         const noteKey = `${employee}-${dateKey}`;
@@ -2453,38 +2458,14 @@ async function applyStatusToSelectedCells(status) {
         delete cellAddresses[addressKey];
         delete cellHighlights[highlightKey];
         cell.removeAttribute('data-info');
+        cellData.push({ cell, employee, dateKey });
     }
     await saveData('cellNotes', cellNotes);
     await saveData('cellLinks', cellLinks);
     await saveData('cellAddresses', cellAddresses);
     await saveData('cellHighlights', cellHighlights);
     
-    // WICHTIG: Sammle zuerst alle dateKeys und employee-Informationen, BEVOR wir die Zellen verarbeiten
-    // Das verhindert, dass Zellen während der Verarbeitung verloren gehen
-    const cellsToProcess = [];
-    const cellData = [];
-    
-    // Sammle alle Zellen und ihre Daten
-    for (const cell of selectedCells) {
-        if (!cell || !cell.parentElement) continue;
-        
-        const row = cell.parentElement;
-        const employeeElement = row.querySelector('td:first-child span');
-        if (!employeeElement) continue;
-        
-        const employee = employeeElement.textContent;
-        const dateKey = getDateKeyFromCell(cell);
-        
-        if (!dateKey) {
-            console.warn('Kein dateKey für Zelle gefunden:', cell);
-            continue;
-        }
-        
-        cellsToProcess.push(cell);
-        cellData.push({ cell, employee, dateKey });
-    }
-    
-    console.log('Verarbeite Status für', cellsToProcess.length, 'Zellen');
+    console.log('Verarbeite Status für', cellData.length, 'Zellen');
     console.log('Markierte Zellen:', cellData.map(d => `${d.employee}-${d.dateKey}`));
     
     // Sortiere Zellen nach Position, um konsistente Verarbeitung zu gewährleisten
